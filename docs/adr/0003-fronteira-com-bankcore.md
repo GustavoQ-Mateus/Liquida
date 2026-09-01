@@ -2,7 +2,7 @@
 
 - **Status:** Aceita (v1 desacoplado, integração planejada para v-next)
 - **Data:** 2026-08-31
-- **Contexto:** O [BankCore](../../../PRD_BankCore_Go.md) é a API de núcleo bancário (Go): contas, transferências atômicas e ledger append-only. Ele é a origem natural das transações que o **Liquida** liquida. Existe a tentação de acoplar os dois já na v1.
+- **Contexto:** O [BankCore](../../BankCore/docs/PRD_BankCore_Go.md) é a API de núcleo bancário (Go): contas, transferências atômicas e ledger append-only. Ele é a origem natural das transações que o **Liquida** liquida. Existe a tentação de acoplar os dois já na v1.
 
 ## Decisão
 Na **v1**, o Liquida é **autônomo**: lê de sua própria tabela `transacoes_pendentes` (com seed), sem depender do BankCore. A integração com o BankCore fica **desenhada como fronteira** e adiada para uma versão futura da spec.
