@@ -1,13 +1,10 @@
-# Liquida — infra local (spec-v1.0.0 §4, §9, CA4)
-# RabbitMQ (fila + DLQ) e PostgreSQL (transacoes_pendentes / liquidacoes).
-# Credenciais e portas vêm do .env (ver .env.example).
 services:
   rabbitmq:
     image: rabbitmq:3.13-management
     container_name: liquida-rabbitmq
     ports:
-      - "${RABBITMQ_PORT:-5672}:5672"       # AMQP
-      - "${RABBITMQ_MGMT_PORT:-15672}:15672" # UI de gerenciamento
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
