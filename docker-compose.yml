@@ -9,7 +9,7 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -32,6 +32,54 @@ services:
       retries: 5
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: src/Liquida.Api/Dockerfile
+    container_name: liquida-api
+    ports:
+      - "${API_PORT:-8080}:8080"
+    environment:
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Port: 5672
+      RabbitMq__User: ${RABBITMQ_USER:-guest}
+      RabbitMq__Password: ${RABBITMQ_PASS:-guest}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  consumer:
+    build:
+      context: .
+      dockerfile: src/Liquida.Consumer/Dockerfile
+    container_name: liquida-consumer
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-liquida};Username=${POSTGRES_USER:-liquida};Password=${POSTGRES_PASSWORD:-liquida}
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Port: 5672
+      RabbitMq__User: ${RABBITMQ_USER:-guest}
+      RabbitMq__Password: ${RABBITMQ_PASS:-guest}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  producer:
+    build:
+      context: .
+      dockerfile: src/Liquida.Producer/Dockerfile
+    container_name: liquida-producer
+    restart: "no"
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-liquida};Username=${POSTGRES_USER:-liquida};Password=${POSTGRES_PASSWORD:-liquida}
+      Producer__ApiBaseUrl: http://api:8080
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
 
 volumes:
   rabbitmq_data:

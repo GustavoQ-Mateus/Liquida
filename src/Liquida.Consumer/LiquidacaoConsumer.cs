@@ -57,7 +57,7 @@ public sealed class LiquidacaoConsumer : BackgroundService
             Password = _rabbit.Password
         };
 
-        _connection = await factory.CreateConnectionAsync(stoppingToken);
+        _connection = await ConnectWithRetryAsync(factory, stoppingToken);
         _channel = await _connection.CreateChannelAsync(cancellationToken: stoppingToken);
 
         await _channel.QueueDeclareAsync(
@@ -105,6 +105,26 @@ public sealed class LiquidacaoConsumer : BackgroundService
             Interlocked.Read(ref _liquidadas),
             Interlocked.Read(ref _duplicadas),
             Interlocked.Read(ref _paraDlq));
+    }
+
+    private async Task<IConnection> ConnectWithRetryAsync(ConnectionFactory factory, CancellationToken cancellationToken)
+    {
+        const int maxTentativas = 10;
+        for (var tentativa = 1; ; tentativa++)
+        {
+            try
+            {
+                return await factory.CreateConnectionAsync(cancellationToken);
+            }
+            catch (Exception ex) when (tentativa < maxTentativas && !cancellationToken.IsCancellationRequested)
+            {
+                var espera = TimeSpan.FromSeconds(Math.Min(tentativa * 2, 10));
+                _logger.LogWarning(
+                    "RabbitMQ indisponível em {Host}:{Port} (tentativa {Tentativa}/{Max}): {Motivo}. Nova tentativa em {Espera}s.",
+                    _rabbit.Host, _rabbit.Port, tentativa, maxTentativas, ex.Message, espera.TotalSeconds);
+                await Task.Delay(espera, cancellationToken);
+            }
+        }
     }
 
     private async Task OnReceivedAsync(object sender, BasicDeliverEventArgs ea)

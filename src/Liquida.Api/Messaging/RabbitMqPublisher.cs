@@ -31,7 +31,7 @@ public sealed class RabbitMqPublisher : IMessagePublisher, IHostedService, IAsyn
             Password = _options.Password
         };
 
-        _connection = await factory.CreateConnectionAsync(cancellationToken);
+        _connection = await ConnectWithRetryAsync(factory, cancellationToken);
         _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
 
         await _channel.QueueDeclareAsync(
@@ -84,6 +84,26 @@ public sealed class RabbitMqPublisher : IMessagePublisher, IHostedService, IAsyn
         finally
         {
             _publishLock.Release();
+        }
+    }
+
+    private async Task<IConnection> ConnectWithRetryAsync(ConnectionFactory factory, CancellationToken cancellationToken)
+    {
+        const int maxTentativas = 10;
+        for (var tentativa = 1; ; tentativa++)
+        {
+            try
+            {
+                return await factory.CreateConnectionAsync(cancellationToken);
+            }
+            catch (Exception ex) when (tentativa < maxTentativas && !cancellationToken.IsCancellationRequested)
+            {
+                var espera = TimeSpan.FromSeconds(Math.Min(tentativa * 2, 10));
+                _logger.LogWarning(
+                    "RabbitMQ indisponível em {Host}:{Port} (tentativa {Tentativa}/{Max}): {Motivo}. Nova tentativa em {Espera}s.",
+                    _options.Host, _options.Port, tentativa, maxTentativas, ex.Message, espera.TotalSeconds);
+                await Task.Delay(espera, cancellationToken);
+            }
         }
     }
 
