@@ -1,0 +1,41 @@
+# Liquida — infra local (spec-v1.0.0 §4, §9, CA4)
+# RabbitMQ (fila + DLQ) e PostgreSQL (transacoes_pendentes / liquidacoes).
+# Credenciais e portas vêm do .env (ver .env.example).
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: liquida-rabbitmq
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"       # AMQP
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672" # UI de gerenciamento
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: liquida-postgres
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-liquida}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-liquida}
+      POSTGRES_DB: ${POSTGRES_DB:-liquida}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-liquida} -d ${POSTGRES_DB:-liquida}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  rabbitmq_data:
+  postgres_data:
