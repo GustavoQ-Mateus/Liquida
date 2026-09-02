@@ -27,4 +27,4 @@ A `Liquida.Api` — que já é o ponto de entrada do sistema — passa a servir 
 - A `Liquida.Api` ganha dependência de leitura no PostgreSQL (`Npgsql`/`Dapper`) e um cliente HTTP para o Management API — antes ela só publicava no broker.
 - `rateLimited` zera a cada restart da API (aceitável: é métrica de observabilidade, não ledger).
 - `rpsLiquidacao` é uma janela deslizante de 1s calculada no banco; é uma aproximação instantânea, não uma média — coerente com "provar visualmente os 25 rps".
-- O `docker-compose` passa a ter healthcheck no serviço `api` (o endpoint `/health`), fechando a dependência `service_healthy` que o `producer` já declarava.
+- O serviço `api` no compose passa a depender do `postgres` (`service_healthy`) e a receber a connection string, já que agora lê do banco. O `HEALTHCHECK` do `api` (via `/health`) continua vindo do `Dockerfile`, como antes.
