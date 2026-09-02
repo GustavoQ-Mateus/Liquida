@@ -482,3 +482,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Claude Code transcript/prompt dumps (ex.: 2026-09-01-002044-ola-....txt)
+/20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt
