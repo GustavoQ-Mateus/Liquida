@@ -1,0 +1,109 @@
+<div class="page">
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <h1>Liquida <small>· pipeline de liquidação</small></h1>
+    </div>
+    <div class="status" [class.on]="online()" [class.off]="!online()">
+      <span class="pulse"></span>
+      @if (online()) {
+        <span>ao vivo · {{ hora(metrics()!.capturadoEm) }}</span>
+      } @else {
+        <span>API offline</span>
+      }
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="hero-main">
+      <div class="hero-label">Vazão de liquidação</div>
+      <div class="hero-value">
+        <span class="rps">{{ rps() }}</span>
+        <span class="rps-unit">req/s</span>
+        <span class="rps-alvo">meta {{ RPS_ALVO }}/s</span>
+      </div>
+      <div class="bar">
+        <div class="bar-fill" [style.width.%]="rpsPct()"></div>
+      </div>
+    </div>
+    <div class="hero-spark">
+      <svg viewBox="0 0 100 28" preserveAspectRatio="none" aria-label="histórico de vazão">
+        @if (sparkPath()) {
+          <path [attr.d]="sparkPath()" class="spark-line" />
+        }
+      </svg>
+      <span class="spark-caption">últimos {{ historico().length }}s</span>
+    </div>
+  </section>
+
+  <section class="cards">
+    <article class="card c-pendentes">
+      <div class="card-k">Pendentes</div>
+      <div class="card-v">{{ numero(metrics()?.pendentes) }}</div>
+      <div class="card-s">na origem</div>
+    </article>
+    <article class="card c-enviadas">
+      <div class="card-k">Enviadas</div>
+      <div class="card-v">{{ numero(metrics()?.enviadas) }}</div>
+      <div class="card-s">aceitas pela API</div>
+    </article>
+    <article class="card c-liquidadas">
+      <div class="card-k">Liquidadas</div>
+      <div class="card-v">{{ numero(metrics()?.liquidadas) }}</div>
+      <div class="card-s">no ledger</div>
+    </article>
+    <article class="card c-429">
+      <div class="card-k">429</div>
+      <div class="card-v">{{ numero(metrics()?.rateLimited) }}</div>
+      <div class="card-s">rate limited</div>
+    </article>
+    <article class="card c-fila">
+      <div class="card-k">Fila</div>
+      <div class="card-v">{{ numero(metrics()?.fila) }}</div>
+      <div class="card-s">backlog RabbitMQ</div>
+    </article>
+    <article class="card c-dlq" [class.alerta]="(metrics()?.dlq ?? 0) > 0">
+      <div class="card-k">DLQ</div>
+      <div class="card-v">{{ numero(metrics()?.dlq) }}</div>
+      <div class="card-s">dead letter</div>
+    </article>
+  </section>
+
+  <section class="feeds">
+    <div class="feed">
+      <h2>Liquidações recentes</h2>
+      <div class="rows">
+        @for (l of liquidacoes(); track l.transacaoId) {
+          <div class="row">
+            <code>{{ shortId(l.transacaoId) }}</code>
+            <span class="val">{{ valor(l.valor) }}</span>
+            <span class="time">{{ hora(l.liquidadoEm) }}</span>
+          </div>
+        } @empty {
+          <div class="vazio">sem liquidações ainda</div>
+        }
+      </div>
+    </div>
+
+    <div class="feed">
+      <h2>Transações recentes</h2>
+      <div class="rows">
+        @for (t of transacoes(); track t.id) {
+          <div class="row">
+            <code>{{ shortId(t.id) }}</code>
+            <span class="tipo">{{ t.tipo }}</span>
+            <span class="badge" [class.enviada]="t.status === 'ENVIADA'">{{ t.status }}</span>
+            <span class="val">{{ valor(t.valor) }}</span>
+            <span class="time">{{ hora(t.criadoEm) }}</span>
+          </div>
+        } @empty {
+          <div class="vazio">sem transações ainda</div>
+        }
+      </div>
+    </div>
+  </section>
+
+  <footer class="rodape">
+    Liquida v1.1.0 · 25 rps (token bucket) · fila RabbitMQ + DLQ · consumer idempotente
+  </footer>
+</div>
