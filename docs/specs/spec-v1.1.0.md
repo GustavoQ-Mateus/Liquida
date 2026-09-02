@@ -74,7 +74,7 @@ Snapshot do pipeline num instante.
 ```
 
 ### 4.4 `GET /health`
-Inalterado (liveness). Passa a ser usado também como **healthcheck** do serviço `api` no `docker-compose` (corrige a dependência `service_healthy` que o `producer` já declarava).
+Inalterado (liveness). Já é o `HEALTHCHECK` do serviço `api` (definido no `Dockerfile` via `curl`), que a dependência `service_healthy` do `producer` usa. A 1.1.0 só acrescenta ao `api` no compose a connection string do Postgres e `depends_on: postgres` (necessários para os endpoints de leitura).
 
 ## 5. Requisitos funcionais (delta)
 - **RF4** A API expõe `GET /metrics` agregando contadores de Postgres, profundidade de filas do RabbitMQ e o contador de `429` em memória, sem bloquear quando uma fonte falha.

@@ -41,12 +41,16 @@ services:
     ports:
       - "${API_PORT:-8080}:8080"
     environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-liquida};Username=${POSTGRES_USER:-liquida};Password=${POSTGRES_PASSWORD:-liquida}
       RabbitMq__Host: rabbitmq
       RabbitMq__Port: 5672
+      RabbitMq__ManagementPort: 15672
       RabbitMq__User: ${RABBITMQ_USER:-guest}
       RabbitMq__Password: ${RABBITMQ_PASS:-guest}
     depends_on:
       rabbitmq:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   consumer:
