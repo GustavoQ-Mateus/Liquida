@@ -16,7 +16,7 @@ Na **v1**, o Liquida é **autônomo**: lê de sua própria tabela `transacoes_pe
 - **Origem:** o Producer do Liquida passa a ler as transferências pendentes de liquidação do BankCore, seja consultando um endpoint (`GET /transfers?status=PENDING`) ou lendo a tabela `Transfer`.
 - **Callback:** ao liquidar, o Consumer do Liquida confirma no BankCore (ex.: `PATCH /transfers/{id}/settle`), fechando o ciclo no ledger.
 - **Idempotência ponta a ponta:** a chave de idempotência do BankCore (`Idempotency-Key`/`transferId`) é a mesma usada pelo Liquida (`transacao_id`), garantindo consistência entre os dois serviços.
-- **Contrato:** definido numa `spec-v1.1.0.md` ou `spec-v2.0.0.md`, com esta ADR referenciada.
+- **Contrato:** definido em [`spec-v2.0.0.md`](../specs/spec-v2.0.0.md) (Draft), com esta ADR e a [ADR 0005](0005-auth-servico-a-servico-com-bankcore.md) (auth) referenciadas.
 
 ## Consequências
 - v1 não tem dependência de runtime do BankCore.

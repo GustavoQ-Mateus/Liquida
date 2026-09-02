@@ -22,12 +22,13 @@ banco (PostgreSQL) --batch--> API /liquidacoes (<=25 rps) --202--> fila (RabbitM
 - `GET /liquidacoes/recentes?limite=50` e `GET /transacoes/recentes?limite=50` — feeds. Todos são `GET` **fora** do rate limiter. Fontes de cada métrica em ADR 0004.
 
 ## Documentação (spec-driven)
-- **Specs (versionadas):** [`spec-v1.0.0`](docs/specs/spec-v1.0.0.md) (núcleo backend) · [`spec-v1.1.0`](docs/specs/spec-v1.1.0.md) (endpoints de leitura + dashboard)
+- **Specs (versionadas):** [`spec-v1.0.0`](docs/specs/spec-v1.0.0.md) (núcleo backend) · [`spec-v1.1.0`](docs/specs/spec-v1.1.0.md) (endpoints de leitura + dashboard) · [`spec-v2.0.0`](docs/specs/spec-v2.0.0.md) (fronteira BankCore — Draft)
 - **Decisões de arquitetura (ADR):**
   - [0001 — Token Bucket vs Fixed Window](docs/adr/0001-token-bucket-vs-fixed-window.md)
   - [0002 — API enfileira e responde 202](docs/adr/0002-api-enfileira-e-responde-202.md)
   - [0003 — Fronteira com o BankCore](docs/adr/0003-fronteira-com-bankcore.md)
   - [0004 — Endpoints de leitura e fontes das métricas](docs/adr/0004-endpoints-de-leitura-e-fontes-de-metrica.md)
+  - [0005 — Auth serviço-a-serviço com o BankCore (JWT service-role)](docs/adr/0005-auth-servico-a-servico-com-bankcore.md)
 
 ## Como rodar
 
@@ -89,4 +90,4 @@ dotnet test        # validação, rate limit + leitura fora do rate limiter (Web
 ## Status
 - **v1.0.0** — backend completo e validado (CA1–CA5), tag `v1.0.0`.
 - **v1.1.0** — endpoints de leitura + dashboard Angular/SCSS. Código completo; `dotnet test` verde (incl. CA9: leitura fora do rate limiter). Validação E2E do dashboard contra o pipeline vivo (CA6–CA8) roda com `docker compose up` + `npm start`.
-- **Próximo (v2.0.0):** integração com o [BankCore](docs/adr/0003-fronteira-com-bankcore.md).
+- **v2.0.0 (Draft):** integração com o [BankCore](docs/specs/spec-v2.0.0.md) — origem via `GET /transfers?status=PENDING`, callback `PATCH /settle`, auth JWT service-role (ADR 0005). Contrato de fronteira pendente de alinhamento com a spec do BankCore.
