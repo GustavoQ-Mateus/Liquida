@@ -7,18 +7,27 @@ Pipeline de **liquidação de transações de pagamento** em C# (.NET 8). Um bat
 ## Arquitetura
 ```
 banco (PostgreSQL) --batch--> API /liquidacoes (<=25 rps) --202--> fila (RabbitMQ) --> consumer (liquida idempotente)
+                                   ^  GET /metrics, /*/recentes
+                                   |
+                        dashboard Angular/SCSS (polling 1s)
 ```
-- **Liquida.Api** — Minimal API + rate limit Token Bucket 25/s + publisher RabbitMQ.
+- **Liquida.Api** — Minimal API + rate limit Token Bucket 25/s + publisher RabbitMQ; e (v1.1) endpoints de leitura para o dashboard.
 - **Liquida.Producer** — Worker que lê `transacoes_pendentes` (Dapper) e faz POST com pacing 25/s + Polly.
 - **Liquida.Consumer** — BackgroundService que consome a fila e grava em `liquidacoes` (idempotente) + DLQ.
 - **Liquida.Shared** — DTOs e contratos.
+- **web/liquida-dashboard** (v1.1) — Angular 20 + SCSS: visualiza o pipeline em tempo quase real (pendentes, enviadas, liquidadas, `429`, fila, DLQ e vazão rps).
+
+### Endpoints de leitura (v1.1, para o dashboard)
+- `GET /metrics` — snapshot: `{ pendentes, enviadas, liquidadas, rpsLiquidacao, fila, dlq, rateLimited }`. `fila`/`dlq` viram `null` se o RabbitMQ Management API estiver fora (degradação graciosa).
+- `GET /liquidacoes/recentes?limite=50` e `GET /transacoes/recentes?limite=50` — feeds. Todos são `GET` **fora** do rate limiter. Fontes de cada métrica em ADR 0004.
 
 ## Documentação (spec-driven)
-- **Spec (versionada):** [`docs/specs/spec-v1.0.0.md`](docs/specs/spec-v1.0.0.md)
+- **Specs (versionadas):** [`spec-v1.0.0`](docs/specs/spec-v1.0.0.md) (núcleo backend) · [`spec-v1.1.0`](docs/specs/spec-v1.1.0.md) (endpoints de leitura + dashboard)
 - **Decisões de arquitetura (ADR):**
   - [0001 — Token Bucket vs Fixed Window](docs/adr/0001-token-bucket-vs-fixed-window.md)
   - [0002 — API enfileira e responde 202](docs/adr/0002-api-enfileira-e-responde-202.md)
   - [0003 — Fronteira com o BankCore](docs/adr/0003-fronteira-com-bankcore.md)
+  - [0004 — Endpoints de leitura e fontes das métricas](docs/adr/0004-endpoints-de-leitura-e-fontes-de-metrica.md)
 
 ## Como rodar
 
@@ -50,9 +59,22 @@ dotnet run --project src/Liquida.Consumer     # consumer
 dotnet run --project src/Liquida.Producer     # seed + envio
 ```
 
+### Dashboard (v1.1, Angular + SCSS)
+Com a API no ar (Docker ou `dotnet run`), aponte o dashboard para ela e suba o dev server:
+```bash
+cd web/liquida-dashboard
+npm install
+npm start                          # http://localhost:4200
+```
+Por padrão consome `http://localhost:8080` (a API no Docker). Para outra URL, sobrescreva em runtime sem rebuild adicionando ao `src/index.html`:
+```html
+<script>window.LIQUIDA_API_BASE = 'http://localhost:5058'</script>
+```
+A API libera CORS para `http://localhost:4200` (configurável em `Cors:AllowedOrigins`). O dashboard faz polling a cada 1s; se a API cair, mostra "API offline" sem quebrar.
+
 ### Testes
 ```bash
-dotnet test        # validação, rate limit (WebApplicationFactory) e idempotência (Testcontainers)
+dotnet test        # validação, rate limit + leitura fora do rate limiter (WebApplicationFactory) e idempotência (Testcontainers)
 ```
 
 ## Decisões-chave (resumo)
@@ -65,4 +87,6 @@ dotnet test        # validação, rate limit (WebApplicationFactory) e idempotê
 1. Banco de origem: PostgreSQL. 2. Fila: RabbitMQ real com DLQ. 3. Rate limit **global** na API (não por cliente). 4. "Liquidar" = persistir em `liquidacoes` de forma idempotente, sem sistemas externos reais.
 
 ## Status
-Backend v1.0.0 completo e validado (CA1–CA5). Próximo: dashboard Angular/SCSS (`spec-v1.1.0`).
+- **v1.0.0** — backend completo e validado (CA1–CA5), tag `v1.0.0`.
+- **v1.1.0** — endpoints de leitura + dashboard Angular/SCSS. Código completo; `dotnet test` verde (incl. CA9: leitura fora do rate limiter). Validação E2E do dashboard contra o pipeline vivo (CA6–CA8) roda com `docker compose up` + `npm start`.
+- **Próximo (v2.0.0):** integração com o [BankCore](docs/adr/0003-fronteira-com-bankcore.md).
