@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | **Versão** | 2.0.0 |
-| **Status** | Draft — contrato de fronteira **fechado**; 2 dependências no BankCore bloqueiam a implementação (R1 leitura, R2 orquestração) |
+| **Status** | Draft — contrato de fronteira **fechado**; dependências R1/R2/R3 **resolvidas** pelo BankCore (v1.1.0). Pronto para implementação (Passo 10); E2E só requer provisionar uma credencial de service-client. |
 | **Data** | 2026-09-02 |
 | **Autor** | Gustavo Queiroz Mateus |
 | **Domínio** | Liquidação/compensação de transações de pagamento |
@@ -38,10 +38,9 @@ v2.0:  BankCore (pendentes) --Producer--> Liquida.Api --fila--> Consumer --> liq
 ### 4.1 Auth — `POST /auth/token` → JWT `SETTLEMENT`
 Detalhado na **ADR 0005**. Resumo: client-credentials (`client_id`/`client_secret` em env) → `{"token","token_type":"Bearer"}`, TTL 15min, sem refresh, claim **`role`** (singular). O Liquida cacheia o token e re-obtém em `401`. Todas as chamadas ao BankCore levam `Authorization: Bearer <jwt>`.
 
-### 4.2 Origem — leitura de pendentes  ⛔ depende de **R1**
-- O relatório do BankCore confirmou que a role `SETTLEMENT` **não** consegue ler pendentes hoje: `GET /transfers?status=PENDING` filtra por owner e `/admin/transfers` exige ADMIN. **Bloqueia o Producer.**
-- **Decisão de contrato (pedido R1 ao BankCore):** criar `GET /settlement/transfers?status=PENDING`, acessível à role `SETTLEMENT` (least-privilege, sem dar ADMIN), com a **mesma** paginação/schema já usados.
-- **Paginação:** offset-based, param `page` (1-based, default 1), page size fixo **50**, sem `total`/`hasNext`. O Producer **pagina até vir `transfers` vazio**.
+### 4.2 Origem — leitura de pendentes  ✅ **R1 entregue**
+- O BankCore criou o endpoint dedicado **`GET /settlement/transfers?status=PENDING`**, protegido por `RequireRole(SETTLEMENT)` (least-privilege — não abriu `/admin`, então a role de settlement não ganha listagem de contas). `CUSTOMER` recebe `403`; `SETTLEMENT` lê o backlog global. Confirmado E2E pelo BankCore.
+- **Paginação:** offset-based, params `page` (1-based, default 1) e page size **fixo 50** (sem query param para alterar — a spec já assumia isso, sem conflito). A resposta traz **`has_next`** (R3 entregue, via fetch de `limit+1`, custo ~zero), além de `page` e `page_size`. O Producer **pagina enquanto `has_next=true`** (sem o round-trip extra de "até vir vazio").
 - **Schema do `Transfer` (JSON real) e mapeamento → `LiquidacaoMessage`:**
 
 | BankCore | tipo | → Liquida | observação |
@@ -88,16 +87,25 @@ Detalhado na **ADR 0005**. Resumo: client-credentials (`client_id`/`client_secre
 - **CA13** Token expirado (>15min) → o Liquida renova via `POST /auth/token` e conclui, sem falhar o batch.
 
 ## 8. Ordem de execução (2.0.0)
-1. **Passo 9** ✅ Fechar o contrato (esta revisão). Contrato de dados/auth/callback **definido**; restam as dependências R1/R2 no BankCore.
-2. **Passo 10** `BankCoreTokenProvider` + `ITransferSource` (`Local` = seed atual; `BankCore` = cliente paginado com auth). Selecionável por `Origem`. Testes de mapeamento (RNF14) e de auth/renovação. **Bloqueado por R1** para o E2E, mas a abstração + `Local` + o `TokenProvider` podem ser feitos já.
+1. **Passo 9** ✅ Fechar o contrato + resolver dependências. Contrato de dados/auth/callback **definido**; R1/R2/R3 **entregues** pelo BankCore.
+2. **Passo 10** `BankCoreTokenProvider` + `ITransferSource` (`Local` = seed atual; `BankCore` = cliente paginado por `has_next` com auth). Selecionável por `Origem`. Testes de mapeamento (RNF14) e de auth/renovação. **Desbloqueado** (R1 entregue).
 3. **Passo 11** Callback `PATCH /settle` no Consumer, disparado só na primeira inserção; tabela de erros §4.3; DLQ. Testes CA11–CA12.
-4. **Passo 12** E2E com BankCore + Liquida no mesmo compose (**R2**); provar CA10–CA13; README; tag `v2.0.0`.
+4. **Passo 12** E2E com BankCore + Liquida na rede compartilhada (**R2 entregue**); provar CA10–CA13; README; tag `v2.0.0`. Pré-requisito operacional: provisionar a credencial de service-client (§9).
 
-## 9. Dependências no BankCore (bloqueiam a implementação)
-- **R1 (bloqueia Passo 10 E2E) — leitura de pendentes para a role `SETTLEMENT`.** Hoje nenhuma rota serve o backlog global a essa role. Pedido: `GET /settlement/transfers?status=PENDING`, escopado à role `SETTLEMENT`, mesma paginação (offset `page`, size 50) e mesmo schema de `Transfer`. (Alternativa aceitável: permitir a role `SETTLEMENT` em `GET /admin/transfers` — menos limpo por dar alcance de admin.)
-- **R2 (bloqueia Passo 12) — orquestração.** Adicionar a API do BankCore ao `docker-compose` com rede compartilhada (base URL `http://bankcore-api:8080`). Atenção a colisão de porta: BankCore e `Liquida.Api` escutam ambos `:8080` no container — no host, mapear portas distintas (ex.: BankCore `8081:8080`, Liquida `8080:8080`).
-- **R3 (opcional, nice-to-have)** — metadados de paginação (`hasNext`/`total`) na resposta de pendentes. Sem eles o Producer pagina até vir lista vazia; funciona, só é um round-trip a mais no fim.
-- **Resolvido, não precisa de mudança no BankCore:** expor `idempotency_key` — descartado; adotamos o `id` do BankCore como `transacao_id` (§5).
+## 9. Dependências no BankCore
+- **R1 ✅ entregue — leitura de pendentes para a role `SETTLEMENT`.** `GET /settlement/transfers?status=PENDING`, protegido por `RequireRole(SETTLEMENT)` (dedicado, não abriu `/admin`). Paginação offset (`page`, size 50) + `has_next`/`page`/`page_size`. E2E confirmado (SETTLEMENT lê; CUSTOMER → 403). Commits BankCore `d0aeb80`/`9f63ebe`.
+- **R2 ✅ entregue — orquestração.** `docker-compose` do BankCore sobe `postgres → migrate → bankcore-api` na rede **`bankcore-net`**. Alcançável em `http://bankcore-api:8080` dentro da rede; no host mapeado **`8081:8080`** (não colide com `Liquida.Api` em `8080`). O Postgres do BankCore foi para o host **`5433`** (o `liquida-postgres` já ocupa `5432`) — coexistem. Para o E2E, o compose do Liquida anexa a rede como **externa**:
+  ```yaml
+  networks:
+    bankcore-net:
+      external: true
+  ```
+  e usa `http://bankcore-api:8080` como base URL do BankCore.
+- **R3 ✅ entregue** — `has_next` na resposta de pendentes (via `limit+1`). O Producer pagina por ele, sem round-trip extra.
+- **Resolvido, sem mudança no BankCore:** expor `idempotency_key` — descartado; adotamos o `id` do BankCore como `transacao_id` (§5).
+
+### Pré-requisito operacional do E2E (não é mudança de código do BankCore)
+Provisionar uma credencial de service-client com role `SETTLEMENT` via `POST /admin/service-clients` (role ADMIN) → retorna `client_id` (`svc_...`) + `client_secret` (mostrado 1x). O Liquida guarda esses valores em `.env` (fora do git) e os injeta como `BankCore__ClientId`/`BankCore__ClientSecret`.
 
 ## 10. Decisões tomadas do lado do Liquida (não exigem o BankCore)
 - **D1** `transacao_id := Transfer.id` do BankCore (chave ponta-a-ponta).
@@ -105,6 +113,8 @@ Detalhado na **ADR 0005**. Resumo: client-credentials (`client_id`/`client_secre
 - **D3** Em `Origem=BankCore`, o Producer ignora `transacoes_pendentes` (lê BankCore → `POST /liquidacoes`). `Origem=Local` mantém o seed da v1 para dev/demo.
 - **D4** `settle` envia `settlement_ref = "liquida:" + transacaoId` (opcional, rastreio).
 - **D5** Tratamento de erros do `settle` conforme tabela §4.3 (200 sucesso, 401 renova, 409/404/400/403 → DLQ, 5xx → retry).
+- **D6** Producer pagina a origem por `has_next` (não por "até vir vazio").
 
 ## 11. Changelog
-- **2.0.0 (2026-09-02, Draft)** — Fronteira com o BankCore fechada contra o relatório v1.1.0: auth JWT service-role `SETTLEMENT` (claim `role`, TTL 15min, `POST /auth/token`), origem paginada, callback `PATCH /settle` idempotente, `transacao_id` = `Transfer.id`, mapeamento de dados (cents→decimal, `tipo` opcional). Pipeline interno (25 rps, fila, consumer idempotente) preservado. Restam as dependências R1 (leitura para a role de settlement) e R2 (orquestração no compose) no BankCore.
+- **2.0.0 (2026-09-03, Draft)** — Dependências de fronteira R1/R2/R3 resolvidas pelo BankCore (v1.1.0): endpoint dedicado `GET /settlement/transfers` (role SETTLEMENT, `has_next`), compose compartilhado (`bankcore-net`, host `8081`, postgres `5433`). Spec pronta para implementação (Passo 10). E2E requer apenas provisionar a credencial de service-client.
+- **2.0.0 (2026-09-02, Draft)** — Fronteira com o BankCore fechada contra o relatório v1.1.0: auth JWT service-role `SETTLEMENT` (claim `role`, TTL 15min, `POST /auth/token`), origem paginada, callback `PATCH /settle` idempotente, `transacao_id` = `Transfer.id`, mapeamento de dados (cents→decimal, `tipo` opcional). Pipeline interno (25 rps, fila, consumer idempotente) preservado.
