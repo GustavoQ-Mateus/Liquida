@@ -6,7 +6,7 @@ public sealed record LiquidacaoMessage(
     string Moeda,
     string ContaOrigem,
     string ContaDestino,
-    TipoTransacao Tipo,
+    TipoTransacao? Tipo,
     DateTimeOffset EnfileiradoEm)
 {
     public static LiquidacaoMessage FromRequest(LiquidacaoRequest req) => new(

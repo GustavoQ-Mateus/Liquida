@@ -45,6 +45,14 @@ public class LiquidacaoRequestValidatorTests
     }
 
     [Fact]
+    public void TipoAusente_Passa()
+    {
+        var ok = LiquidacaoRequestValidator.TryValidate(Valida() with { Tipo = null }, out var errors);
+        Assert.True(ok);
+        Assert.Empty(errors);
+    }
+
+    [Fact]
     public void IdVazio_Falha()
     {
         var ok = LiquidacaoRequestValidator.TryValidate(Valida() with { Id = Guid.Empty }, out var errors);

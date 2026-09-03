@@ -39,7 +39,7 @@ public static class LiquidacaoRequestValidator
             errors[nameof(request.ContaDestino)] = ["contaDestino é obrigatória."];
         }
 
-        if (!Enum.IsDefined(request.Tipo))
+        if (request.Tipo is { } tipo && !Enum.IsDefined(tipo))
         {
             errors[nameof(request.Tipo)] = ["tipo inválido (use PIX, TED ou BOLETO)."];
         }

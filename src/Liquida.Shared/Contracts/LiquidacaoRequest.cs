@@ -6,4 +6,4 @@ public sealed record LiquidacaoRequest(
     string Moeda,
     string ContaOrigem,
     string ContaDestino,
-    TipoTransacao Tipo);
+    TipoTransacao? Tipo);
