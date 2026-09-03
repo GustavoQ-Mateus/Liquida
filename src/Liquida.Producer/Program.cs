@@ -1,5 +1,7 @@
 using Liquida.Producer;
 using Liquida.Producer.Data;
+using Liquida.Producer.Http.BankCore;
+using Liquida.Producer.Source;
 using Polly;
 using Polly.Extensions.Http;
 using Serilog;
@@ -12,20 +14,51 @@ builder.Services.AddSerilog((services, configuration) => configuration
     .Enrich.FromLogContext()
     .WriteTo.Console());
 
-builder.Services.Configure<ProducerOptions>(
-    builder.Configuration.GetSection(ProducerOptions.SectionName));
+var producerSection = builder.Configuration.GetSection(ProducerOptions.SectionName);
+builder.Services.Configure<ProducerOptions>(producerSection);
 
 builder.Services.AddScoped<DatabaseInitializer>();
 builder.Services.AddScoped<ITransacaoRepository, TransacaoRepository>();
 
-var apiBaseUrl = builder.Configuration
-    .GetSection(ProducerOptions.SectionName)["ApiBaseUrl"] ?? "http://localhost:5058";
+var apiBaseUrl = producerSection["ApiBaseUrl"] ?? "http://localhost:5058";
 
 builder.Services.AddHttpClient("liquidacoes", client =>
     {
         client.BaseAddress = new Uri(apiBaseUrl);
     })
     .AddPolicyHandler(BuildRetryPolicy());
+
+var origem = producerSection.GetValue<TransferOrigem>("Origem");
+if (origem == TransferOrigem.BankCore)
+{
+    builder.Services.Configure<BankCoreOptions>(builder.Configuration.GetSection(BankCoreOptions.SectionName));
+
+    var bankCoreBaseUrl = builder.Configuration
+        .GetSection(BankCoreOptions.SectionName)["BaseUrl"] ?? "http://bankcore-api:8080";
+
+    builder.Services.AddSingleton<BankCoreTokenProvider>();
+    builder.Services.AddTransient<BankCoreAuthHandler>();
+
+    builder.Services.AddHttpClient(BankCoreTokenProvider.AuthClientName, client =>
+    {
+        client.BaseAddress = new Uri(bankCoreBaseUrl);
+    });
+
+    builder.Services.AddHttpClient(BankCoreClient.ClientName, client =>
+        {
+            client.BaseAddress = new Uri(bankCoreBaseUrl);
+        })
+        .AddHttpMessageHandler<BankCoreAuthHandler>();
+
+    builder.Services.AddScoped(sp => new BankCoreClient(
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient(BankCoreClient.ClientName)));
+
+    builder.Services.AddScoped<ITransferSource, BankCoreTransferSource>();
+}
+else
+{
+    builder.Services.AddScoped<ITransferSource, LocalTransferSource>();
+}
 
 builder.Services.AddHostedService<ProducerWorker>();
 

@@ -25,6 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Liquida.Api\Liquida.Api.csproj" />
     <ProjectReference Include="..\..\src\Liquida.Consumer\Liquida.Consumer.csproj" />
+    <ProjectReference Include="..\..\src\Liquida.Producer\Liquida.Producer.csproj" />
     <ProjectReference Include="..\..\src\Liquida.Shared\Liquida.Shared.csproj" />
   </ItemGroup>
 

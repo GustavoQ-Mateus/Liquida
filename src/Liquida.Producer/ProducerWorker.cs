@@ -1,7 +1,7 @@
 using System.Net;
 using System.Threading.RateLimiting;
-using Liquida.Producer.Data;
 using Liquida.Producer.Http;
+using Liquida.Producer.Source;
 using Microsoft.Extensions.Options;
 
 namespace Liquida.Producer;
@@ -31,16 +31,9 @@ public sealed class ProducerWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var scope = _services.CreateScope();
-        var repo = scope.ServiceProvider.GetRequiredService<ITransacaoRepository>();
+        var source = scope.ServiceProvider.GetRequiredService<ITransferSource>();
 
-        await scope.ServiceProvider.GetRequiredService<DatabaseInitializer>().EnsureSchemaAsync(stoppingToken);
-
-        var pendentes = await repo.ContarPendentesAsync(stoppingToken);
-        if (pendentes == 0 && _options.SeedCount > 0)
-        {
-            var semeadas = await repo.SemearAsync(_options.SeedCount, stoppingToken);
-            _logger.LogInformation("Seed: {Semeadas} transações pendentes inseridas.", semeadas);
-        }
+        await source.PrepararAsync(stoppingToken);
 
         using var rateLimiter = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
         {
@@ -52,39 +45,46 @@ public sealed class ProducerWorker : BackgroundService
             AutoReplenishment = true
         });
 
+        var pollDelay = TimeSpan.FromSeconds(Math.Max(_options.PollDelaySeconds, 1));
         long lidas = 0, enviadas = 0, rateLimited = 0, falhas = 0;
         var inicio = DateTimeOffset.UtcNow;
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            var pagina = await repo.LerPendentesAsync(_options.PageSize, stoppingToken);
+            var pagina = await source.LerProximaPaginaAsync(stoppingToken);
             if (pagina.Count == 0)
             {
+                if (source.Continuo)
+                {
+                    await Task.Delay(pollDelay, stoppingToken);
+                    continue;
+                }
+
                 break;
             }
 
             var client = new LiquidacaoApiClient(_httpClientFactory.CreateClient("liquidacoes"));
 
-            foreach (var transacao in pagina)
+            foreach (var request in pagina)
             {
                 lidas++;
                 using var lease = await rateLimiter.AcquireAsync(1, stoppingToken);
 
-                var status = await client.EnviarAsync(transacao.ToRequest(), stoppingToken);
+                var status = await client.EnviarAsync(request, stoppingToken);
                 if (status == HttpStatusCode.Accepted)
                 {
-                    await repo.MarcarEnviadaAsync(transacao.Id, stoppingToken);
+                    await source.MarcarEnviadaAsync(request.Id, stoppingToken);
                     enviadas++;
                 }
                 else if (status == HttpStatusCode.TooManyRequests)
                 {
                     rateLimited++;
-                    _logger.LogWarning("Transação {Id} recebeu 429 após retries; será reenviada.", transacao.Id);
+                    _logger.LogWarning("Transação {Id} recebeu 429 após retries; será reenviada.", request.Id);
                 }
                 else
                 {
                     falhas++;
-                    _logger.LogError("Transação {Id} recebeu status inesperado {Status}.", transacao.Id, (int)status);
+                    _logger.LogError("Transação {Id} recebeu status inesperado {Status}.", request.Id, (int)status);
                 }
             }
         }
@@ -95,6 +95,9 @@ public sealed class ProducerWorker : BackgroundService
             "Producer concluído em {Segundos:F1}s. lidas={Lidas} enviadas={Enviadas} rate_limited={RateLimited} falhas={Falhas} vazao={Rps:F1}rps",
             duracao.TotalSeconds, lidas, enviadas, rateLimited, falhas, rps);
 
-        _lifetime.StopApplication();
+        if (!source.Continuo)
+        {
+            _lifetime.StopApplication();
+        }
     }
 }
