@@ -99,7 +99,7 @@ Detalhado na **ADR 0005**. Resumo: client-credentials (`client_id`/`client_secre
 
 ## 8. Ordem de execução (2.0.0)
 1. **Passo 9** ✅ Fechar o contrato + resolver dependências. Contrato de dados/auth/callback **definido**; R1/R2/R3 **entregues** pelo BankCore.
-2. **Passo 10** `BankCoreTokenProvider` + `ITransferSource` (`Local` = seed atual; `BankCore` = cliente paginado por `has_next` com auth). Selecionável por `Origem`. Testes de mapeamento (RNF14) e de auth/renovação. **Desbloqueado** (R1 entregue).
+2. **Passo 10** ✅ `BankCoreTokenProvider` (cache + refresh por `expires_in` + renovação em `401`) + `ITransferSource` (`Local` = seed atual; `BankCore` = cliente paginado por `has_next` com auth), selecionável por `Origem`. `tipo` opcional no contrato (RNF14). Testes de mapeamento e auth verdes (15/15 unit). Falta apenas o E2E com credencial real.
 3. **Passo 11** Callback `PATCH /settle` no Consumer, disparado só na primeira inserção; tabela de erros §4.3; DLQ. Testes CA11–CA12.
 4. **Passo 12** E2E com BankCore + Liquida na rede compartilhada (**R2 entregue**); provar CA10–CA13; README; tag `v2.0.0`. Pré-requisito operacional: provisionar a credencial de service-client (§9).
 
