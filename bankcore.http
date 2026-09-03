@@ -1,0 +1,46 @@
+@bankcore = http://localhost:8081
+@adminEmail = admin@bankcore.dev
+@adminPassword = admin123
+
+### 1 registra admin (rota publica aceita role — apenas E2E)
+POST {{bankcore}}/auth/register
+Content-Type: application/json
+
+{ "name": "root", "email": "{{adminEmail}}", "password": "{{adminPassword}}", "role": "ADMIN" }
+
+### 2 login admin (copie o token para @adminJwt)
+POST {{bankcore}}/auth/login
+Content-Type: application/json
+
+{ "email": "{{adminEmail}}", "password": "{{adminPassword}}" }
+
+@adminJwt = COLE_O_TOKEN_ADMIN
+
+### 3 provisiona service-client SETTLEMENT (copie client_id/secret para o .env)
+POST {{bankcore}}/admin/service-clients
+Authorization: Bearer {{adminJwt}}
+
+### 4 token de servico via client-credentials (copie para @svcJwt)
+POST {{bankcore}}/auth/token
+Content-Type: application/json
+
+{ "client_id": "svc_...", "client_secret": "..." }
+
+@svcJwt = COLE_O_TOKEN_DE_SERVICO
+
+### 5 lista pendentes (role SETTLEMENT)
+GET {{bankcore}}/settlement/transfers?status=PENDING&page=1
+Authorization: Bearer {{svcJwt}}
+
+@transferId = COLE_UM_ID_PENDENTE
+
+### 6 settle (confirma liquidacao)
+PATCH {{bankcore}}/transfers/{{transferId}}/settle
+Authorization: Bearer {{svcJwt}}
+Content-Type: application/json
+
+{ "settlement_ref": "liquida:{{transferId}}" }
+
+### 7 fail (nao usado pelo Liquida — falha vai para DLQ; aqui so para inspecao)
+PATCH {{bankcore}}/transfers/{{transferId}}/fail
+Authorization: Bearer {{svcJwt}}
