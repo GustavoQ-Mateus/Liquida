@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | **Versão** | 2.0.0 |
-| **Status** | Draft — contrato de fronteira **fechado**; R1/R2/R3 **resolvidos** pelo BankCore (v1.1.0). Shapes confirmados contra o código do BankCore. Pronto para implementação (Passo 10). Restam 3 ajustes menores solicitados ao BankCore (R4 códigos de erro distintos, R5 `expires_in`, R6 ordenação estável) e o pré-req operacional da credencial de service-client. |
+| **Status** | Draft — contrato de fronteira **fechado**; **R1–R6 resolvidos** pelo BankCore (v1.1.0). Shapes confirmados contra o código do BankCore. Pronto para implementação (Passo 10). Resta apenas o pré-req operacional da credencial de service-client. |
 | **Data** | 2026-09-02 |
 | **Autor** | Gustavo Queiroz Mateus |
 | **Domínio** | Liquidação/compensação de transações de pagamento |
@@ -38,7 +38,7 @@ v2.0:  BankCore (pendentes) --Producer--> Liquida.Api --fila--> Consumer --> liq
 ### 4.1 Auth — `POST /auth/token` → JWT `SETTLEMENT`
 Detalhado na **ADR 0005**. Resumo: client-credentials (`client_id`/`client_secret` em env) → `{"token","token_type":"Bearer"}`, TTL 15min, sem refresh, claim **`role`** (singular). O Liquida cacheia o token e re-obtém em `401`. Todas as chamadas ao BankCore levam `Authorization: Bearer <jwt>`.
 - **`DisallowUnknownFields`:** o `POST /auth/token` rejeita campo extra com `400 VALIDATION`. Enviar **só** `{"client_id","client_secret"}` — nada de `grant_type`. Content-Type `application/json` (form-urlencoded quebra). A chave da resposta é **`token`** (não `access_token`).
-- **Renovação:** a resposta **não** traz `expires_in` hoje (o TTL vive só no `exp` do JWT) — solicitado ao BankCore adicioná-lo (**R5**). Enquanto não vier, o `BankCoreTokenProvider` renova proativamente com margem antes de 15min, além da renovação reativa em `401`.
+- **Renovação (R5 ✅ entregue):** a resposta traz **`expires_in`** em segundos (`{"token","token_type":"Bearer","expires_in":900}`, de `SERVICE_JWT_TTL`, default 900 = 15min). O `BankCoreTokenProvider` agenda o refresh proativo por `expires_in` (com margem) e mantém a renovação reativa em `401` — não precisa decodificar o `exp` do JWT.
 
 ### 4.2 Origem — leitura de pendentes  ✅ **R1 entregue**
 - O BankCore criou o endpoint dedicado **`GET /settlement/transfers?status=PENDING`**, protegido por `RequireRole(SETTLEMENT)` (least-privilege — não abriu `/admin`, então a role de settlement não ganha listagem de contas). `CUSTOMER` recebe `403`; `SETTLEMENT` lê o backlog global. Confirmado E2E pelo BankCore.
@@ -49,7 +49,7 @@ Detalhado na **ADR 0005**. Resumo: client-credentials (`client_id`/`client_secre
     "transfers": [ { "id": "3f2b…", "from_account_id": "a1…", "to_account_id": "b…",
                      "amount_cents": 15000, "status": "PENDING", "created_at": "2026-…" } ] }
   ```
-- **Ordenação (R6, solicitado):** paginação offset exige `ORDER BY` determinístico — sem ele, páginas repetem/pulam linhas entre requests. Pedido ao BankCore garantir **`created_at ASC, id ASC`** (FIFO — liquida na ordem de chegada; `id` desempata). O Producer assume essa ordem estável.
+- **Ordenação (R6 ✅ entregue):** o BankCore garante **`created_at ASC, id ASC`** nas três listagens por status (settlement/admin/cliente) — antes era só `created_at ASC` (paginação offset não-determinística). Agora é FIFO estável (liquida na ordem de chegada; `id` desempata). O Producer assume essa ordem.
 - **Schema do `Transfer` (JSON real) e mapeamento → `LiquidacaoMessage`:**
 
 | BankCore | tipo | → Liquida | observação |
@@ -67,7 +67,7 @@ Detalhado na **ADR 0005**. Resumo: client-credentials (`client_id`/`client_secre
 - `{id}` = `id` do BankCore (= `transacaoId` do Liquida). Body opcional `{"settlement_ref":"<string>"}`; o Liquida envia `settlement_ref = "liquida:" + transacaoId` para rastreio. Resposta `200` com o `Transfer` já `SETTLED`.
 - **Idempotência natural** pelo `transferId` + state machine (o BankCore ignora `Idempotency-Key` no settle, e não precisamos dele): `settle` repetido numa transfer já `SETTLED` → `200` no-op (mantém o `settlement_ref` original). Combinado com a barreira local (`liquidacoes`), o callback duplicado é seguro em duas camadas.
 - **Shape do erro (confirmado, `httpx.go:52`):** `{"error":{"code":"<CODE>","message":"<pt-BR>"}}`. O Consumer roteia pelo **`error.code`**, nunca pela `message`.
-- **Códigos distintos no 409 (R4, solicitado):** hoje todo 409 traz `code:"CONFLICT"` — indistinguível. Pedido ao BankCore emitir **`SETTLE_ON_FAILED`** (settle sobre `FAILED`) e **`FAIL_ON_SETTLED`** (fail sobre `SETTLED`), mantendo `CONFLICT` genérico. No caminho de `settle` o único 409 hoje é `FAILED` → `DLQ` já é determinístico; o code distinto blinda contra 409s futuros de outra origem.
+- **Códigos distintos no 409 (R4 ✅ entregue):** o BankCore emite **`SETTLE_ON_FAILED`** (settle sobre `FAILED`) e **`FAIL_ON_SETTLED`** (fail sobre `SETTLED`), mantendo `CONFLICT` genérico pra conflitos futuros. O Consumer roteia DLQ por `error.code`, nunca pela `message`.
 - **Tabela de respostas → ação do Consumer:**
 
 | Resposta do BankCore | Significado | Ação do Consumer |
@@ -115,10 +115,10 @@ Detalhado na **ADR 0005**. Resumo: client-credentials (`client_id`/`client_secre
 - **R3 ✅ entregue** — `has_next` na resposta de pendentes (via `limit+1`). O Producer pagina por ele, sem round-trip extra.
 - **Resolvido, sem mudança no BankCore:** expor `idempotency_key` — descartado; adotamos o `id` do BankCore como `transacao_id` (§5).
 
-**Solicitados ao BankCore (ajustes menores, não bloqueiam o Passo 10):**
-- **R4 — códigos de erro distintos no 409.** Hoje `code:"CONFLICT"` para qualquer conflito. Pedido: `SETTLE_ON_FAILED` e `FAIL_ON_SETTLED` (§4.3), + Swagger regenerado. Sem isso, o Consumer roteia por `message` (PT-BR) — funcional, porém frágil.
-- **R5 — `expires_in` na resposta do `/auth/token`.** Hoje o TTL vive só no `exp` do JWT (§4.1). Fallback do Liquida: renovação proativa por margem + reativa em `401`.
-- **R6 — ordenação estável `created_at ASC, id ASC`** em `GET /settlement/transfers` (§4.2). Necessário para a paginação offset não repetir/pular linhas; o Producer assume FIFO.
+**Entregues pelo BankCore (v1.1.0):**
+- **R4 ✅ — códigos de erro distintos no 409.** `SETTLE_ON_FAILED` / `FAIL_ON_SETTLED`, `CONFLICT` genérico preservado; Swagger regenerado (§4.3). O Consumer roteia DLQ por `error.code`.
+- **R5 ✅ — `expires_in` na resposta do `/auth/token`.** Em segundos (default 900), de `SERVICE_JWT_TTL` (§4.1). Refresh proativo sem decodificar o JWT.
+- **R6 ✅ — ordenação estável `created_at ASC, id ASC`** nas listagens por status (§4.2). Paginação offset determinística; Producer assume FIFO. (Testes de contrato do BankCore: `TestExternal_SettleThenFailConflict`, `TestExternal_FailThenSettleConflict`, assert de `expires_in > 0`.)
 
 ### Pré-requisito operacional do E2E (não é mudança de código do BankCore)
 Provisionar uma credencial de service-client com role `SETTLEMENT`. **Não há seed/bootstrap de admin** no BankCore hoje: o admin é criado pela rota pública `POST /auth/register` aceitando `role` no corpo (buraco de segurança conhecido do BankCore, a ser fechado depois com gate por env / seed do 1º admin — não bloqueia o E2E). Fluxo:
@@ -137,6 +137,7 @@ O Liquida guarda `client_id`/`client_secret` em `.env` (fora do git) e os injeta
 - **D6** Producer pagina a origem por `has_next` (não por "até vir vazio").
 
 ## 11. Changelog
+- **2.0.0 (2026-09-03, Draft — R4/R5/R6 entregues)** — BankCore fechou os 3 ajustes: códigos 409 distintos (`SETTLE_ON_FAILED`/`FAIL_ON_SETTLED`), `expires_in` (900s) no `/auth/token`, ordenação estável `created_at ASC, id ASC`. Contrato de fronteira 100% resolvido; resta só o pré-req operacional da credencial. Desbloqueia integralmente o Passo 10–11.
 - **2.0.0 (2026-09-03, Draft — shapes confirmados)** — Contrato validado contra o **código** do BankCore: envelope de pendentes (`transfers` na chave, `page/page_size/has_next/status` na raiz), `/auth/token` JSON estrito (`DisallowUnknownFields`, chave `token`, sem `expires_in`), callbacks assimétricos (`/transfers/{id}/settle|fail` fora de `/settlement`), shape de erro `{"error":{"code","message"}}`. Abertos 3 ajustes menores solicitados: R4 (códigos 409 distintos), R5 (`expires_in`), R6 (ordenação estável FIFO). Documentado o fluxo de provisionamento de admin/service-client (sem seed no BankCore — register público aceita `role`, buraco conhecido).
 - **2.0.0 (2026-09-03, Draft)** — Dependências de fronteira R1/R2/R3 resolvidas pelo BankCore (v1.1.0): endpoint dedicado `GET /settlement/transfers` (role SETTLEMENT, `has_next`), compose compartilhado (`bankcore-net`, host `8081`, postgres `5433`). Spec pronta para implementação (Passo 10). E2E requer apenas provisionar a credencial de service-client.
 - **2.0.0 (2026-09-02, Draft)** — Fronteira com o BankCore fechada contra o relatório v1.1.0: auth JWT service-role `SETTLEMENT` (claim `role`, TTL 15min, `POST /auth/token`), origem paginada, callback `PATCH /settle` idempotente, `transacao_id` = `Transfer.id`, mapeamento de dados (cents→decimal, `tipo` opcional). Pipeline interno (25 rps, fila, consumer idempotente) preservado.
