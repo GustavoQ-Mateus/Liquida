@@ -1,4 +1,4 @@
-namespace Liquida.Producer.Http.BankCore;
+namespace Liquida.Shared.BankCore;
 
 public sealed class BankCoreOptions
 {

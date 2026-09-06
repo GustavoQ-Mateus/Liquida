@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Liquida.Producer.Http.BankCore;
+using Liquida.Shared.BankCore;
 using Liquida.Shared.Contracts;
 using Xunit;
 

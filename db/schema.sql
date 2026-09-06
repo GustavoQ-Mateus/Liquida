@@ -12,8 +12,11 @@ CREATE TABLE IF NOT EXISTS transacoes_pendentes (
 CREATE INDEX IF NOT EXISTS ix_transacoes_pendentes_status ON transacoes_pendentes (status);
 
 CREATE TABLE IF NOT EXISTS liquidacoes (
-    transacao_id UUID PRIMARY KEY,
-    status       TEXT          NOT NULL DEFAULT 'LIQUIDADA',
-    valor        NUMERIC(18,2) NOT NULL,
-    liquidado_em TIMESTAMPTZ   NOT NULL DEFAULT now()
+    transacao_id         UUID PRIMARY KEY,
+    status               TEXT          NOT NULL DEFAULT 'LIQUIDADA',
+    valor                NUMERIC(18,2) NOT NULL,
+    liquidado_em         TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    settle_confirmado_em TIMESTAMPTZ   NULL
 );
+
+ALTER TABLE liquidacoes ADD COLUMN IF NOT EXISTS settle_confirmado_em TIMESTAMPTZ NULL;

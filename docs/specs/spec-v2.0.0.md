@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | **Versão** | 2.0.0 |
-| **Status** | Draft — contrato de fronteira **fechado**; **R1–R6 resolvidos** pelo BankCore (v1.1.0). Shapes confirmados contra o código do BankCore. Pronto para implementação (Passo 10). Resta apenas o pré-req operacional da credencial de service-client. |
+| **Status** | Draft — contrato de fronteira **fechado**; **R1–R6 resolvidos** pelo BankCore (v1.1.0). Shapes confirmados contra o código do BankCore. **Passos 10 e 11 entregues** (origem BankCore + token provider; callback `PATCH /settle` idempotente com DLQ — 26/26 testes verdes). Resta o **Passo 12** (E2E), bloqueado só pelo pré-req operacional da credencial de service-client. |
 | **Data** | 2026-09-02 |
 | **Autor** | Gustavo Queiroz Mateus |
 | **Domínio** | Liquidação/compensação de transações de pagamento |
@@ -43,11 +43,12 @@ Detalhado na **ADR 0005**. Resumo: client-credentials (`client_id`/`client_secre
 ### 4.2 Origem — leitura de pendentes  ✅ **R1 entregue**
 - O BankCore criou o endpoint dedicado **`GET /settlement/transfers?status=PENDING`**, protegido por `RequireRole(SETTLEMENT)` (least-privilege — não abriu `/admin`, então a role de settlement não ganha listagem de contas). `CUSTOMER` recebe `403`; `SETTLEMENT` lê o backlog global. Confirmado E2E pelo BankCore.
 - **Paginação:** offset-based, params `page` (1-based, default 1) e page size **fixo 50** (sem query param para alterar — a spec já assumia isso, sem conflito). A resposta traz **`has_next`** (R3 entregue, via fetch de `limit+1`, custo ~zero), além de `page` e `page_size`. O Producer **pagina enquanto `has_next=true`** (sem o round-trip extra de "até vir vazio").
-- **Envelope da resposta (confirmado no código, `handler.go:178`):** o array de transfers vem sob a chave **`transfers`**; `page`, `page_size`, `has_next` e `status` ficam na **raiz**, ao lado. `settled_at`/`settlement_ref` **não** aparecem enquanto `PENDING` (só após o `settle`). Exemplo:
+- **Envelope da resposta (confirmado no código, `handler.go:178`; handoff BankCore v1.1.0 §2.2):** o array de transfers vem sob a chave **`transfers`**; `page`, `page_size`, `has_next` e `status` ficam na **raiz**, ao lado. Enquanto `PENDING`, `settled_at` e `settlement_ref` vêm presentes como **`null`** (não são omitidos — só ganham valor após o `settle`); o `TransferDto` os ignora nesse estado. Exemplo:
   ```json
   { "page": 1, "page_size": 50, "has_next": false, "status": "PENDING",
     "transfers": [ { "id": "3f2b…", "from_account_id": "a1…", "to_account_id": "b…",
-                     "amount_cents": 15000, "status": "PENDING", "created_at": "2026-…" } ] }
+                     "amount_cents": 15000, "status": "PENDING",
+                     "settled_at": null, "settlement_ref": null, "created_at": "2026-…" } ] }
   ```
 - **Ordenação (R6 ✅ entregue):** o BankCore garante **`created_at ASC, id ASC`** nas três listagens por status (settlement/admin/cliente) — antes era só `created_at ASC` (paginação offset não-determinística). Agora é FIFO estável (liquida na ordem de chegada; `id` desempata). O Producer assume essa ordem.
 - **Schema do `Transfer` (JSON real) e mapeamento → `LiquidacaoMessage`:**
@@ -81,8 +82,8 @@ Detalhado na **ADR 0005**. Resumo: client-credentials (`client_id`/`client_secre
 
 ## 5. Idempotência ponta a ponta
 - **Chave única:** o **`id` da transfer do BankCore vira o `transacao_id` do Liquida**. O Liquida deixa de gerar `transacao_id` (não semeia mais em modo BankCore); adota o id da origem. Isso dispensa expor o `idempotency_key` do BankCore (ponto que o relatório levantou) — o `id` já é a correlação natural, e o `settle` é keyed por ele, funcionando **sem mudança** no BankCore.
-- **Barreira local:** só a **primeira** inserção bem-sucedida em `liquidacoes` dispara `PATCH /settle`; reprocessos (batch reexecutado, redelivery da fila) não reconfirmam.
-- **Dupla proteção:** mesmo que o Consumer grave em `liquidacoes` e caia antes do `settle`, o reprocesso vê a linha já existente **e** o BankCore responde `200` idempotente — nenhum efeito duplo em nenhum dos lados.
+- **Barreira local:** a inserção em `liquidacoes` (`ON CONFLICT DO NOTHING`) é a barreira. A coluna **`settle_confirmado_em`** marca se o callback já concluiu: `RegistrarAsync` retorna `Inserida` (linha nova), `PendenteConfirmacao` (linha existe, `settle_confirmado_em IS NULL`) ou `JaConfirmada` (já confirmada). Só os dois primeiros disparam `PATCH /settle`; `JaConfirmada` é no-op.
+- **Dupla proteção:** se o Consumer grava em `liquidacoes` e cai **antes** do `settle`, o reprocesso vê `PendenteConfirmacao` e **reconfirma** (o BankCore responde `200` idempotente); se cai **depois**, vê `JaConfirmada` e não repete. Combinado com o `200` idempotente do BankCore, não há efeito duplo em nenhum dos lados.
 
 ## 6. Requisitos (delta)
 - **RF7** Em `Origem=BankCore`, o Producer lê pendentes do BankCore (paginado, até esvaziar) e envia à `Liquida.Api` a 25 rps.
@@ -100,7 +101,7 @@ Detalhado na **ADR 0005**. Resumo: client-credentials (`client_id`/`client_secre
 ## 8. Ordem de execução (2.0.0)
 1. **Passo 9** ✅ Fechar o contrato + resolver dependências. Contrato de dados/auth/callback **definido**; R1/R2/R3 **entregues** pelo BankCore.
 2. **Passo 10** ✅ `BankCoreTokenProvider` (cache + refresh por `expires_in` + renovação em `401`) + `ITransferSource` (`Local` = seed atual; `BankCore` = cliente paginado por `has_next` com auth), selecionável por `Origem`. `tipo` opcional no contrato (RNF14). Testes de mapeamento e auth verdes (15/15 unit). Falta apenas o E2E com credencial real.
-3. **Passo 11** Callback `PATCH /settle` no Consumer, disparado só na primeira inserção; tabela de erros §4.3; DLQ. Testes CA11–CA12.
+3. **Passo 11** ✅ Callback `PATCH /settle` no Consumer. Infra de transporte/auth do BankCore (`BankCoreOptions`/`TokenProvider`/`AuthHandler` + DTOs de token/erro) **movida para `Liquida.Shared.BankCore`** (Producer lê, Consumer confirma). Novo `BankCoreSettleClient` classifica a resposta em `Confirmada`/`Terminal`/`Transitorio` (tabela §4.3, roteando por `error.code`). Consumer dispara o settle só quando o registro em `liquidacoes` **não** está confirmado (`RegistroLiquidacao.Inserida`/`PendenteConfirmacao`); `JaConfirmada` é no-op idempotente. Barreira reforçada com a coluna `settle_confirmado_em` (fecha o gap "gravou local e caiu antes do settle" — reprocesso reconfirma; §5). Callback é opt-in por `BankCore:CallbackAtivo` (Consumer sem a flag = comportamento Local da v1). 26/26 testes verdes (settle routing 200/409/404/403/401/503 + idempotência `JaConfirmada` contra Postgres real).
 4. **Passo 12** E2E com BankCore + Liquida na rede compartilhada (**R2 entregue**); provar CA10–CA13; README; tag `v2.0.0`. Pré-requisito operacional: provisionar a credencial de service-client (§9).
 
 ## 9. Dependências no BankCore
@@ -135,8 +136,12 @@ O Liquida guarda `client_id`/`client_secret` em `.env` (fora do git) e os injeta
 - **D4** `settle` envia `settlement_ref = "liquida:" + transacaoId` (opcional, rastreio).
 - **D5** Tratamento de erros do `settle` conforme tabela §4.3 (200 sucesso, 401 renova, 409/404/400/403 → DLQ, 5xx → retry).
 - **D6** Producer pagina a origem por `has_next` (não por "até vir vazio").
+- **D7** (resposta ao handoff BankCore §4.1) **Cadência de polling:** contínuo enquanto `has_next=true`; quando o backlog zera, aguarda **5s** e revarre. Baixa latência de liquidação, custo baixo no BankCore.
+- **D8** (resposta ao handoff BankCore §4.4) **Reconciliação de órfãos:** o **Liquida garante o fechamento** — todo `PENDING` lido é liquidado (`settle`) ou vai para a **DLQ** (visível à operação). O BankCore **não** precisa de timeout/reconciliação automática na 1.2.0. Uma transfer só permanece `PENDING` se o Liquida nunca a leu (backlog não drenado), não por perda silenciosa.
+- **D9** (resposta ao handoff BankCore §4.5) **Transporte:** JWT service-role basta no ambiente atual (rede Docker interna `bankcore-net`). **Sem mTLS/assinatura de payload** — hardening fica para versão futura, quando houver exposição externa.
 
 ## 11. Changelog
+- **2.0.0 (2026-09-05, Draft — Passo 11 entregue)** — Callback `PATCH /settle` no Consumer. Infra de auth/transporte do BankCore movida para `Liquida.Shared.BankCore` (reuso Producer/Consumer); `BankCoreSettleClient` com classificação `Confirmada`/`Terminal`/`Transitorio` por `error.code` (§4.3). Barreira de idempotência reforçada com `settle_confirmado_em` (fecha o gap crash-antes-do-settle; `RegistroLiquidacao` em 3 estados). Callback opt-in por `BankCore:CallbackAtivo`. 26/26 testes verdes (roteamento de settle + idempotência contra Postgres real). Reconciliação com o handoff BankCore v1.1.0: §4.2 confirmada (chaves `settled_at`/`settlement_ref` sempre presentes, valor possivelmente `null` — nosso `TransferDto` as ignora), decisões de coordenação §4 respondidas (D7–D9). Falta só o Passo 12 (E2E).
 - **2.0.0 (2026-09-03, Draft — R4/R5/R6 entregues)** — BankCore fechou os 3 ajustes: códigos 409 distintos (`SETTLE_ON_FAILED`/`FAIL_ON_SETTLED`), `expires_in` (900s) no `/auth/token`, ordenação estável `created_at ASC, id ASC`. Contrato de fronteira 100% resolvido; resta só o pré-req operacional da credencial. Desbloqueia integralmente o Passo 10–11.
 - **2.0.0 (2026-09-03, Draft — shapes confirmados)** — Contrato validado contra o **código** do BankCore: envelope de pendentes (`transfers` na chave, `page/page_size/has_next/status` na raiz), `/auth/token` JSON estrito (`DisallowUnknownFields`, chave `token`, sem `expires_in`), callbacks assimétricos (`/transfers/{id}/settle|fail` fora de `/settlement`), shape de erro `{"error":{"code","message"}}`. Abertos 3 ajustes menores solicitados: R4 (códigos 409 distintos), R5 (`expires_in`), R6 (ordenação estável FIFO). Documentado o fluxo de provisionamento de admin/service-client (sem seed no BankCore — register público aceita `role`, buraco conhecido).
 - **2.0.0 (2026-09-03, Draft)** — Dependências de fronteira R1/R2/R3 resolvidas pelo BankCore (v1.1.0): endpoint dedicado `GET /settlement/transfers` (role SETTLEMENT, `has_next`), compose compartilhado (`bankcore-net`, host `8081`, postgres `5433`). Spec pronta para implementação (Passo 10). E2E requer apenas provisionar a credencial de service-client.

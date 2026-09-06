@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 
-namespace Liquida.Producer.Http.BankCore;
+namespace Liquida.Shared.BankCore;
 
 public sealed class BankCoreAuthHandler : DelegatingHandler
 {

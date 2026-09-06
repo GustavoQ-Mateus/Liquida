@@ -2,6 +2,7 @@ using Liquida.Producer;
 using Liquida.Producer.Data;
 using Liquida.Producer.Http.BankCore;
 using Liquida.Producer.Source;
+using Liquida.Shared.BankCore;
 using Polly;
 using Polly.Extensions.Http;
 using Serilog;

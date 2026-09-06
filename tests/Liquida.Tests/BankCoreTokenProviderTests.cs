@@ -1,6 +1,6 @@
 using System.Net;
 using System.Text;
-using Liquida.Producer.Http.BankCore;
+using Liquida.Shared.BankCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;

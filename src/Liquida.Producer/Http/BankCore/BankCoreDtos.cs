@@ -2,15 +2,6 @@ using System.Text.Json.Serialization;
 
 namespace Liquida.Producer.Http.BankCore;
 
-public sealed record TokenRequest(
-    [property: JsonPropertyName("client_id")] string ClientId,
-    [property: JsonPropertyName("client_secret")] string ClientSecret);
-
-public sealed record TokenResponse(
-    [property: JsonPropertyName("token")] string Token,
-    [property: JsonPropertyName("token_type")] string TokenType,
-    [property: JsonPropertyName("expires_in")] int ExpiresIn);
-
 public sealed record TransfersPage(
     [property: JsonPropertyName("page")] int Page,
     [property: JsonPropertyName("page_size")] int PageSize,

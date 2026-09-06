@@ -1,7 +1,8 @@
 using System.Net.Http.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace Liquida.Producer.Http.BankCore;
+namespace Liquida.Shared.BankCore;
 
 public sealed class BankCoreTokenProvider
 {

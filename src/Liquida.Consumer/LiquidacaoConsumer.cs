@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Liquida.Consumer.Data;
+using Liquida.Shared.BankCore;
 using Liquida.Shared.Contracts;
 using Liquida.Shared.Messaging;
 using Microsoft.Extensions.Options;
@@ -12,6 +13,7 @@ namespace Liquida.Consumer;
 public sealed class LiquidacaoConsumer : BackgroundService
 {
     private const int MaxTentativas = 3;
+    private const string SettlementRefPrefixo = "liquida:";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -185,36 +187,78 @@ public sealed class LiquidacaoConsumer : BackgroundService
             {
                 using var scope = _services.CreateScope();
                 var repo = scope.ServiceProvider.GetRequiredService<ILiquidacaoRepository>();
-                var inserida = await repo.LiquidarAsync(message, CancellationToken.None);
+                var settle = scope.ServiceProvider.GetService<IBankCoreSettleClient>();
 
-                if (inserida)
+                var estado = await repo.RegistrarAsync(message, CancellationToken.None);
+
+                if (settle is null)
                 {
-                    Interlocked.Increment(ref _liquidadas);
-                    _logger.LogInformation("Transação {TransacaoId} liquidada (valor={Valor} {Moeda}).",
-                        message.Id, message.Valor, message.Moeda);
+                    RegistrarLocal(estado, message);
+                    return true;
                 }
-                else
+
+                if (estado == RegistroLiquidacao.JaConfirmada)
                 {
                     Interlocked.Increment(ref _duplicadas);
-                    _logger.LogInformation("Transação {TransacaoId} já liquidada; ignorada (idempotência).",
+                    _logger.LogInformation("Transação {TransacaoId} já confirmada; ignorada (idempotência).",
                         message.Id);
+                    return true;
                 }
 
-                return true;
+                var resultado = await settle.SettleAsync(
+                    message.Id, SettlementRefPrefixo + message.Id, CancellationToken.None);
+
+                if (resultado == SettleResultado.Confirmada)
+                {
+                    await repo.MarcarConfirmadaAsync(message.Id, CancellationToken.None);
+                    if (estado == RegistroLiquidacao.Inserida)
+                    {
+                        Interlocked.Increment(ref _liquidadas);
+                    }
+
+                    _logger.LogInformation("Transação {TransacaoId} liquidada e confirmada no BankCore.", message.Id);
+                    return true;
+                }
+
+                if (resultado == SettleResultado.Terminal)
+                {
+                    _logger.LogError("Confirmação de {TransacaoId} falhou de forma terminal; enviada para a DLQ.",
+                        message.Id);
+                    return false;
+                }
+
+                _logger.LogWarning("Confirmação de {TransacaoId} transitória (tentativa {Tentativa}/{Max}).",
+                    message.Id, tentativa, MaxTentativas);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Falha ao liquidar {TransacaoId} (tentativa {Tentativa}/{Max}).",
+                _logger.LogWarning(ex, "Falha ao processar {TransacaoId} (tentativa {Tentativa}/{Max}).",
                     message.Id, tentativa, MaxTentativas);
+            }
 
-                if (tentativa < MaxTentativas)
-                {
-                    await Task.Delay(TimeSpan.FromMilliseconds(200 * tentativa));
-                }
+            if (tentativa < MaxTentativas)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(200 * tentativa));
             }
         }
 
         return false;
+    }
+
+    private void RegistrarLocal(RegistroLiquidacao estado, LiquidacaoMessage message)
+    {
+        if (estado == RegistroLiquidacao.Inserida)
+        {
+            Interlocked.Increment(ref _liquidadas);
+            _logger.LogInformation("Transação {TransacaoId} liquidada (valor={Valor} {Moeda}).",
+                message.Id, message.Valor, message.Moeda);
+        }
+        else
+        {
+            Interlocked.Increment(ref _duplicadas);
+            _logger.LogInformation("Transação {TransacaoId} já liquidada; ignorada (idempotência).",
+                message.Id);
+        }
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
