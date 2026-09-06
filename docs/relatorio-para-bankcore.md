@@ -31,6 +31,8 @@ Recebi e reconciliei o `handoff-liquida-v1.1.0.md`. Resumo do que ele resolve e 
 
 **Nossa única pergunta que o handoff NÃO respondeu:** o buraco do `POST /auth/register` público aceitar `role` (escalada trivial a ADMIN). Não bloqueia o E2E, mas segue aberto do lado de vocês — ver §3.
 
+**🔎 Achado do E2E (hardening, não bloqueante) — `PATCH /settle` ignora body chunked.** O handler de settle lê o `settlement_ref` só `if r.ContentLength > 0` (`internal/transfer/handler.go`). Clientes HTTP que enviam o corpo **chunked** (sem `Content-Length`) — caso do `HttpClient` do .NET com `PatchAsJsonAsync` — têm o body **silenciosamente ignorado**, e o `settlement_ref` fica `NULL` mesmo com `200`. Chunked é HTTP válido. **Contornamos no lado do Liquida** (enviamos `StringContent` com `Content-Length` explícito, então o E2E já persiste `settlement_ref=liquida:<id>` corretamente). Sugestão de robustez pra vocês: tentar decodificar o corpo quando presente independente do `Content-Length` (tratar EOF como body vazio), em vez de gatear por `ContentLength > 0`. Mesmo padrão vale pro `/fail` se um dia aceitar body.
+
 ## TL;DR
 O contrato de fronteira está **100% fechado e implementado** do lado do Liquida até o Passo 10. **R1–R6 foram todos entregues pelo BankCore e já estão consumidos no código** (não só na spec). O Liquida agora entra no **Passo 11** (callback `PATCH /settle`) e no **Passo 12** (E2E integrado) — nenhum dos dois exige mudança de código no BankCore.
 

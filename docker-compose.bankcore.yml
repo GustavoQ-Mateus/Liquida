@@ -1,0 +1,27 @@
+networks:
+  bankcore-net:
+    external: true
+
+services:
+  consumer:
+    networks:
+      - default
+      - bankcore-net
+    environment:
+      ConnectionStrings__Postgres: Host=liquida-postgres;Port=5432;Database=${POSTGRES_DB:-liquida};Username=${POSTGRES_USER:-liquida};Password=${POSTGRES_PASSWORD:-liquida}
+      BankCore__CallbackAtivo: "true"
+      BankCore__BaseUrl: http://bankcore-api:8080
+      BankCore__ClientId: ${BankCore__ClientId}
+      BankCore__ClientSecret: ${BankCore__ClientSecret}
+
+  producer:
+    networks:
+      - default
+      - bankcore-net
+    environment:
+      Producer__Origem: BankCore
+      Producer__PollDelaySeconds: "5"
+      Producer__ApiBaseUrl: http://liquida-api:8080
+      BankCore__BaseUrl: http://bankcore-api:8080
+      BankCore__ClientId: ${BankCore__ClientId}
+      BankCore__ClientSecret: ${BankCore__ClientSecret}

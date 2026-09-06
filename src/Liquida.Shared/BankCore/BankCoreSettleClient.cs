@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
 namespace Liquida.Shared.BankCore;
@@ -33,10 +35,10 @@ public sealed class BankCoreSettleClient : IBankCoreSettleClient
     {
         try
         {
-            using var response = await _http.PatchAsJsonAsync(
-                $"/transfers/{transferId}/settle",
-                new SettleRequest(settlementRef),
-                cancellationToken);
+            var json = JsonSerializer.Serialize(new SettleRequest(settlementRef));
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var response = await _http.PatchAsync(
+                $"/transfers/{transferId}/settle", content, cancellationToken);
 
             if (response.IsSuccessStatusCode)
             {

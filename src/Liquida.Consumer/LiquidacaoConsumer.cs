@@ -168,8 +168,8 @@ public sealed class LiquidacaoConsumer : BackgroundService
             else
             {
                 Interlocked.Increment(ref _paraDlq);
-                _logger.LogError("Transação {TransacaoId} falhou {Tentativas}x; enviada para a DLQ.",
-                    message.Id, MaxTentativas);
+                _logger.LogError("Transação {TransacaoId} não pôde ser processada; enviada para a DLQ.",
+                    message.Id);
                 await _channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: false);
             }
         }
