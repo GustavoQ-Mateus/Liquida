@@ -22,7 +22,7 @@ banco (PostgreSQL) --batch--> API /liquidacoes (<=25 rps) --202--> fila (RabbitM
 - `GET /liquidacoes/recentes?limite=50` e `GET /transacoes/recentes?limite=50` — feeds. Todos são `GET` **fora** do rate limiter. Fontes de cada métrica em ADR 0004.
 
 ## Documentação (spec-driven)
-- **Specs (versionadas):** [`spec-v1.0.0`](docs/specs/spec-v1.0.0.md) (núcleo backend) · [`spec-v1.1.0`](docs/specs/spec-v1.1.0.md) (endpoints de leitura + dashboard) · [`spec-v2.0.0`](docs/specs/spec-v2.0.0.md) (fronteira BankCore — Draft)
+- **Specs (versionadas):** [`spec-v1.0.0`](docs/specs/spec-v1.0.0.md) (núcleo backend) · [`spec-v1.1.0`](docs/specs/spec-v1.1.0.md) (endpoints de leitura + dashboard) · [`spec-v2.0.0`](docs/specs/spec-v2.0.0.md) (fronteira BankCore — E2E verde)
 - **Decisões de arquitetura (ADR):**
   - [0001 — Token Bucket vs Fixed Window](docs/adr/0001-token-bucket-vs-fixed-window.md)
   - [0002 — API enfileira e responde 202](docs/adr/0002-api-enfileira-e-responde-202.md)
@@ -73,6 +73,20 @@ Por padrão consome `http://localhost:8080` (a API no Docker). Para outra URL, s
 ```
 A API libera CORS para `http://localhost:4200` (configurável em `Cors:AllowedOrigins`). O dashboard faz polling a cada 1s; se a API cair, mostra "API offline" sem quebrar.
 
+### Fluxo integrado com o BankCore (v2.0)
+Liquida como serviço de settlement do [BankCore](docs/specs/spec-v2.0.0.md): as transferências nascem `PENDING` no BankCore, o Liquida as liquida a 25 rps e confirma de volta (`PATCH /transfers/{id}/settle`), idempotente ponta a ponta.
+
+Pré-requisitos: o stack do BankCore no ar na rede externa `bankcore-net` (com `LIQUIDA_INTEGRATION=external`) e uma credencial de service-client com role `SETTLEMENT` em `.env` (fora do git):
+```bash
+BankCore__ClientId=svc_...
+BankCore__ClientSecret=...
+```
+Subir o Liquida anexado à `bankcore-net`, com origem BankCore e callback ativo (override):
+```bash
+docker compose -f docker-compose.yml -f docker-compose.bankcore.yml up -d --build
+```
+O Producer lê os pendentes paginados (`GET /settlement/transfers?status=PENDING`, FIFO por `created_at ASC, id ASC`) e faz `POST /liquidacoes`; o Consumer grava em `liquidacoes` (barreira de idempotência) e, na primeira inserção, confirma no BankCore. Erros de settle seguem a tabela §4.3 da spec (200 sucesso, 401 renova token, 409/404/400/403 → DLQ, 5xx → retry). Detalhes de contrato/auth em [ADR 0003](docs/adr/0003-fronteira-com-bankcore.md) e [ADR 0005](docs/adr/0005-auth-servico-a-servico-com-bankcore.md).
+
 ### Testes
 ```bash
 dotnet test        # validação, rate limit + leitura fora do rate limiter (WebApplicationFactory) e idempotência (Testcontainers)
@@ -90,4 +104,4 @@ dotnet test        # validação, rate limit + leitura fora do rate limiter (Web
 ## Status
 - **v1.0.0** — backend completo e validado (CA1–CA5), tag `v1.0.0`.
 - **v1.1.0** — endpoints de leitura + dashboard Angular/SCSS. Código completo; `dotnet test` verde (incl. CA9: leitura fora do rate limiter). Validação E2E do dashboard contra o pipeline vivo (CA6–CA8) roda com `docker compose up` + `npm start`.
-- **v2.0.0 (Draft):** integração com o [BankCore](docs/specs/spec-v2.0.0.md) — origem via `GET /transfers?status=PENDING`, callback `PATCH /settle`, auth JWT service-role (ADR 0005). Contrato de fronteira pendente de alinhamento com a spec do BankCore.
+- **v2.0.0** — integração com o [BankCore](docs/specs/spec-v2.0.0.md): origem via `GET /settlement/transfers?status=PENDING`, callback `PATCH /transfers/{id}/settle` idempotente, auth JWT service-role (ADR 0005). E2E ponta a ponta verde (CA10–CA13): 8 `PENDING`→0 `SETTLED` a 25 rps, reexecução idempotente, `FAILED`→`409`→DLQ, refresh proativo do token. Tag `v2.0.0`.
