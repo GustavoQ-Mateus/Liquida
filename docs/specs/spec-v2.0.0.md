@@ -122,12 +122,18 @@ Detalhado na **ADR 0005**. Resumo: client-credentials (`client_id`/`client_secre
 - **R6 ✅ — ordenação estável `created_at ASC, id ASC`** nas listagens por status (§4.2). Paginação offset determinística; Producer assume FIFO. (Testes de contrato do BankCore: `TestExternal_SettleThenFailConflict`, `TestExternal_FailThenSettleConflict`, assert de `expires_in > 0`.)
 
 ### Pré-requisito operacional do E2E (não é mudança de código do BankCore)
-Provisionar uma credencial de service-client com role `SETTLEMENT`. **Não há seed/bootstrap de admin** no BankCore hoje: o admin é criado pela rota pública `POST /auth/register` aceitando `role` no corpo (buraco de segurança conhecido do BankCore, a ser fechado depois com gate por env / seed do 1º admin — não bloqueia o E2E). Fluxo:
+Provisionar uma credencial de service-client com role `SETTLEMENT`. O roteiro depende da versão do BankCore, porque a 1.2.0 fechou o `register` público (gate `ALLOW_PUBLIC_ADMIN_REGISTER=false` por default → `403 ADMIN_REGISTER_DISABLED`; seed do 1º admin via `ADMIN_EMAIL`/`ADMIN_PASSWORD`). O **passo 3 (`POST /admin/service-clients`) é idêntico nos dois casos**; só muda como se obtém o JWT admin.
+
+**BankCore ≥ 1.2.0 (recomendado — seed):** subir o BankCore com `ADMIN_EMAIL`/`ADMIN_PASSWORD`.
+1. `POST /auth/login` com `ADMIN_EMAIL`/`ADMIN_PASSWORD` → JWT admin.
+2. `POST /admin/service-clients` (Bearer admin) → credencial `SETTLEMENT`.
+
+**BankCore 1.1.0 (histórico — como o E2E do Passo 12 rodou):** com o `register` público ainda aberto (ou `ALLOW_PUBLIC_ADMIN_REGISTER=true` só no compose de E2E).
 1. `POST /auth/register` `{"name","email","password","role":"ADMIN"}` (rota pública).
 2. `POST /auth/login` → JWT admin.
 3. `POST /admin/service-clients` (Bearer admin) → `{ "client": { "client_id":"svc_…", "role":"SETTLEMENT", … }, "client_secret":"<hex-48>", "warning":"guarde agora" }` — a role `SETTLEMENT` é fixa no servidor; o `client_secret` é mostrado **1x**.
 
-O Liquida guarda `client_id`/`client_secret` em `.env` (fora do git) e os injeta como `BankCore__ClientId`/`BankCore__ClientSecret`. Os 3 comandos rodam na máquina do Liquida (o segredo não trafega pelo terminal do BankCore).
+O Liquida guarda `client_id`/`client_secret` em `.env` (fora do git) e os injeta como `BankCore__ClientId`/`BankCore__ClientSecret`. Os comandos rodam na máquina do Liquida (o segredo não trafega pelo terminal do BankCore). Ver handoff BankCore `handoff-liquida-v1.2.0.md` §2 (pedido 2).
 
 ## 10. Decisões tomadas do lado do Liquida (não exigem o BankCore)
 - **D1** `transacao_id := Transfer.id` do BankCore (chave ponta-a-ponta).
@@ -146,6 +152,7 @@ Dois bugs de integração surgiram só com os dois stacks juntos e foram corrigi
 - **A2 — `settlement_ref` não persistia (body chunked).** O `PatchAsJsonAsync` do .NET enviava o corpo sem `Content-Length` (chunked); o handler de settle do BankCore só lê o body `if r.ContentLength > 0`, então gravava `settlement_ref` vazio. **Correção (lado Liquida):** serializar com `StringContent` explícito (garante `Content-Length`). Achado reportado ao BankCore como hardening — decodificar corpo presente independente do `Content-Length` (chunked é HTTP válido).
 
 ## 11. Changelog
+- **2.0.0 (2026-09-07, Entregue — reconciliada com handoff BankCore 1.2.0)** — Recebido `handoff-liquida-v1.2.0.md`: os 3 pedidos da §5 do relatório de fechamento respondidos (hardening do body chunked já mergeado no BankCore desde a 1.1.0; gate do `register` + seed do 1º admin na 1.2.0; contrato de fronteira congelado). **Nenhuma mudança de código no Liquida exigida.** §9 (pré-req operacional) atualizado com o roteiro de provisionamento por versão do BankCore (seed em ≥1.2.0; register público na 1.1.0). Nada bloqueante em aberto.
 - **2.0.0 (2026-09-06, Draft — Passo 12 entregue, E2E verde)** — Ciclo integrado provado ponta a ponta na `bankcore-net`. CA10–CA13 ✅ (8 PENDING→0 SETTLED a 25 rps; reexecução idempotente; `FAILED`→`409 SETTLE_ON_FAILED`→DLQ; `settlement_ref=liquida:<id>`; refresh de token). Override `docker-compose.bankcore.yml` (rede externa, `Origem=BankCore`, `CallbackAtivo=true`, hosts únicos). Dois bugs de integração achados e corrigidos (§12: colisão de DNS; body chunked no settle). README atualizado; tag `v2.0.0` publicada.
 - **2.0.0 (2026-09-05, Draft — Passo 11 entregue)** — Callback `PATCH /settle` no Consumer. Infra de auth/transporte do BankCore movida para `Liquida.Shared.BankCore` (reuso Producer/Consumer); `BankCoreSettleClient` com classificação `Confirmada`/`Terminal`/`Transitorio` por `error.code` (§4.3). Barreira de idempotência reforçada com `settle_confirmado_em` (fecha o gap crash-antes-do-settle; `RegistroLiquidacao` em 3 estados). Callback opt-in por `BankCore:CallbackAtivo`. 26/26 testes verdes (roteamento de settle + idempotência contra Postgres real). Reconciliação com o handoff BankCore v1.1.0: §4.2 confirmada (chaves `settled_at`/`settlement_ref` sempre presentes, valor possivelmente `null` — nosso `TransferDto` as ignora), decisões de coordenação §4 respondidas (D7–D9). Falta só o Passo 12 (E2E).
 - **2.0.0 (2026-09-03, Draft — R4/R5/R6 entregues)** — BankCore fechou os 3 ajustes: códigos 409 distintos (`SETTLE_ON_FAILED`/`FAIL_ON_SETTLED`), `expires_in` (900s) no `/auth/token`, ordenação estável `created_at ASC, id ASC`. Contrato de fronteira 100% resolvido; resta só o pré-req operacional da credencial. Desbloqueia integralmente o Passo 10–11.
