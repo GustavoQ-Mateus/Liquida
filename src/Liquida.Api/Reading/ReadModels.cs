@@ -9,6 +9,7 @@ public sealed record MetricsSnapshot(
     long RpsLiquidacao,
     int? Fila,
     int? Dlq,
+    long Recebidas,
     long RateLimited);
 
 /// <summary>Contadores vindos do PostgreSQL (spec-v1.1.0 §3).</summary>

@@ -63,8 +63,17 @@ public class ReadEndpointsTests : IClassFixture<ReadEndpointsTests.ReadApiFactor
 
                 services.RemoveAll<IMetricsRepository>();
                 services.AddSingleton<IMetricsRepository, FakeMetricsRepository>();
+
+                services.AddHttpClient<QueueDepthClient>()
+                    .ConfigurePrimaryHttpMessageHandler(() => new ManagementApiIndisponivel());
             });
         }
+    }
+
+    private sealed class ManagementApiIndisponivel : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
     }
 
     private sealed class FakePublisher : IMessagePublisher

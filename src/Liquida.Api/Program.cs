@@ -23,6 +23,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<RabbitMqPublisher>
 // Leitura para o dashboard (spec-v1.1.0, ADR 0004).
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<RateLimitCounter>();
+builder.Services.AddSingleton<ReceivedCounter>();
 builder.Services.AddSingleton<IMetricsRepository, MetricsRepository>();
 builder.Services.AddHttpClient<QueueDepthClient>();
 builder.Services.AddScoped<MetricsService>();
@@ -73,6 +74,8 @@ app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
 app.MapGet("/metrics", async (MetricsService metrics, CancellationToken ct) =>
     Results.Ok(await metrics.SnapshotAsync(ct)));
 
+app.MapGet("/metrics/stream", MetricsStream.WriteAsync);
+
 app.MapGet("/liquidacoes/recentes", async (
         IMetricsRepository repo, CancellationToken ct, int limite = 50) =>
     Results.Ok(await repo.LiquidacoesRecentesAsync(NormalizarLimite(limite), ct)));
@@ -84,6 +87,7 @@ app.MapGet("/transacoes/recentes", async (
 app.MapPost("/liquidacoes", async (
         LiquidacaoRequest request,
         IMessagePublisher publisher,
+        ReceivedCounter received,
         CancellationToken cancellationToken) =>
     {
         if (!LiquidacaoRequestValidator.TryValidate(request, out var errors))
@@ -93,6 +97,7 @@ app.MapPost("/liquidacoes", async (
 
         var message = LiquidacaoMessage.FromRequest(request);
         await publisher.PublishAsync(message, cancellationToken);
+        received.Increment();
 
         return Results.Accepted($"/liquidacoes/{request.Id}");
     })
