@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | **Versão** | 2.1.0 |
-| **Status** | Aprovada (2026-10-31, com os ajustes A1 e A2 do orquestrador) |
+| **Status** | Entregue (2026-10-31). Aprovada com os ajustes A1 e A2; CA18 corrigido por decisão do usuário; CA14 a CA21 verificados |
 | **Data** | 2026-10-31 |
 | **Autor** | Gustavo Queiroz Mateus |
 | **Domínio** | Liquidação/compensação de transações de pagamento |
@@ -305,7 +305,7 @@ Avaliado e decidido com o usuário:
 - **CA15** `recebidas` conta exatamente os `202` do `POST /liquidacoes` (testes da §9).
 - **CA16** Com os dois composes no ar (BankCore primeiro, depois `docker compose -f docker-compose.yml -f docker-compose.bankcore.yml up`) **sem `.env` com credencial**, o Liquida autentica no BankCore com a credencial semeada.
 - **CA17** Clicar em **Iniciar simulação** faz KPIs e gráficos se moverem em tempo real até as **liquidadas da execução** (§8.9) alcançarem `simulation.counters.accepted`, com `pending` e fila em 0, DLQ em 0 e `divergent_accounts` em 0. Vale também na segunda execução seguida, sem limpar o banco.
-- **CA18** Recebidas/s nunca passa de 25 sustentado (tolerância: picos isolados de amostragem; média de qualquer janela de 5s ≤ 25).
+- **CA18** Recebidas/s sustentado: média em qualquer janela de 30s ≤ 25 mais o erro de amostragem de 1s; rajada acima de 25 limitada à capacidade do token bucket (25, ADR 0001).
 - **CA19** Derrubar o BankCore ou a `Liquida.Api` durante a corrida: os KPIs da fonte caída mostram `indisponível`, o resto continua atualizando; a fonte volta sozinha quando sobe de novo.
 - **CA20** Dashboard verificado no navegador (desktop 1440, 768 e 390), `inspect.mjs --app` com 0 FAIL, `impeccable detect` sem achados abertos.
 - **CA21** `dotnet build` sem avisos, `dotnet test` verde, `npm run build` (inclui `tsc -b`) sem avisos e `npm test` verde em `web/liquida-dashboard`.
@@ -337,6 +337,7 @@ Branch `feature/dashboard-tempo-real` a partir de `origin/main`.
 - BankCore: seed de `SETTLEMENT_CLIENT_ID`/`SECRET` com os mesmos valores dos defaults da §5 e CORS para `http://localhost:4200` em `/simulation/*`.
 
 ## 14. Changelog
+- **2.1.0 (2026-10-31, Entregue)** Correção de critério por decisão do usuário: o CA18 original (média ≤ 25 em qualquer janela de 5s) era mais rígido que o desenho da ADR 0001, cujo token bucket admite rajada de até 25 além da reposição de 25/s (máximo teórico de 30/s em 5s). O texto novo exige média em 30s ≤ 25 mais o erro de amostragem e rajada limitada à capacidade do bucket. Com os números medidos na execução `6cee89d0` (regime de 23 a 26/s, média máxima em 30s de 25,4), o **CA18 ✅**. Os achados A3 (Producer encerra com a API fora), A4 (Consumer abaixo de 25/s) e A5 (restart da API zera os contadores da execução) viram escopo da 2.2.0. CA14 a CA21 verificados.
 - **2.1.0 (2026-10-31, Aprovada, Passo 17: fluxo integrado)** BankCore `feature/simulador` + Liquida com override, dashboard servido do build de produção em 4200 e aberto em Chrome real (headless via DevTools, a extensão do navegador não estava conectada). Execução `6cee89d0`: 1500 despachadas, 1463 aceitas, 37 recusadas por saldo, iniciada 23:33:17Z e concluída 23:33:45Z; backlog e fila zerados às 23:35:37Z.
   - **CA16 ✅** Producer e Consumer obtêm token com `svc_liquida_dev` sem credencial no `.env` (log "Token do BankCore renovado; válido por ~900s").
   - **CA17 ✅** Liquidadas da execução 3042 − 1579 = **1463 = accepted**; failed +37 = rejected_insufficient; `pending` 0, fila 0, DLQ 0, `divergent_accounts` 0. Os 1571 `PENDING` antigos foram drenados antes do clique. Dashboard: "Execução concluída: 1.463 de 1.463 liquidadas. Ledger íntegro."
