@@ -1,13 +1,37 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
+import { LucideAngularModule } from 'lucide-angular';
 import { ApiService } from './api.service';
 import { RPS_ALVO } from './config';
+import { AreaChart } from './area-chart.component';
+import { Counter } from './counter.component';
+import { Gauge } from './gauge.component';
 
 const MAX_HISTORICO = 60;
 
+interface Historico {
+  rps: number[];
+  pendentes: number[];
+  enviadas: number[];
+  liquidadas: number[];
+  rateLimited: number[];
+  fila: number[];
+  dlq: number[];
+}
+
+const HISTORICO_VAZIO: Historico = {
+  rps: [],
+  pendentes: [],
+  enviadas: [],
+  liquidadas: [],
+  rateLimited: [],
+  fila: [],
+  dlq: [],
+};
+
 @Component({
   selector: 'app-root',
-  imports: [],
+  imports: [Counter, AreaChart, Gauge, LucideAngularModule],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
@@ -24,9 +48,12 @@ export class App {
   readonly rps = computed(() => this.metrics()?.rpsLiquidacao ?? 0);
   readonly rpsPct = computed(() => Math.min(100, Math.round((this.rps() / RPS_ALVO) * 100)));
 
-  // Histórico deslizante de rps para a sparkline — prova visual dos 25 rps.
-  readonly historico = signal<number[]>([]);
-  readonly sparkPath = computed(() => this.pontosSparkline(this.historico()));
+  readonly historico = signal<Historico>(HISTORICO_VAZIO);
+
+  readonly liquidacoesValores = computed(() => this.liquidacoes().map((l) => l.valor));
+  readonly liquidacoesLabels = computed(() => this.liquidacoes().map((l) => this.hora(l.liquidadoEm)));
+  readonly transacoesValores = computed(() => this.transacoes().map((t) => t.valor));
+  readonly transacoesLabels = computed(() => this.transacoes().map((t) => this.hora(t.criadoEm)));
 
   private ultimoInstante: string | null = null;
 
@@ -37,25 +64,20 @@ export class App {
         return;
       }
       this.ultimoInstante = m.capturadoEm;
-      this.historico.update((h) => [...h, m.rpsLiquidacao].slice(-MAX_HISTORICO));
+      this.historico.update((h) => ({
+        rps: this.push(h.rps, m.rpsLiquidacao),
+        pendentes: this.push(h.pendentes, m.pendentes),
+        enviadas: this.push(h.enviadas, m.enviadas),
+        liquidadas: this.push(h.liquidadas, m.liquidadas),
+        rateLimited: this.push(h.rateLimited, m.rateLimited),
+        fila: this.push(h.fila, m.fila ?? 0),
+        dlq: this.push(h.dlq, m.dlq ?? 0),
+      }));
     });
   }
 
-  // ---- helpers de apresentação ----
-
-  shortId(id: string): string {
-    return id ? id.slice(0, 8) : '—';
-  }
-
-  valor(v: number | null | undefined): string {
-    if (v === null || v === undefined) {
-      return '—';
-    }
-    return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  }
-
-  numero(v: number | null | undefined): string {
-    return v === null || v === undefined ? '—' : v.toLocaleString('pt-BR');
+  private push(serie: number[], valor: number): number[] {
+    return [...serie, valor].slice(-MAX_HISTORICO);
   }
 
   hora(iso: string): string {
@@ -64,22 +86,5 @@ export class App {
     }
     const d = new Date(iso);
     return d.toLocaleTimeString('pt-BR', { hour12: false });
-  }
-
-  private pontosSparkline(valores: number[]): string {
-    if (valores.length < 2) {
-      return '';
-    }
-    const w = 100;
-    const h = 28;
-    const max = Math.max(RPS_ALVO, ...valores);
-    const step = w / (MAX_HISTORICO - 1);
-    return valores
-      .map((v, i) => {
-        const x = i * step;
-        const y = h - (v / max) * h;
-        return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(' ');
   }
 }

@@ -21,7 +21,7 @@ public sealed record ContadoresPostgres(
 public sealed record LiquidacaoRecente(
     Guid TransacaoId,
     decimal Valor,
-    DateTimeOffset LiquidadoEm);
+    DateTime LiquidadoEm);
 
 public sealed record TransacaoRecente(
     Guid Id,
@@ -29,4 +29,4 @@ public sealed record TransacaoRecente(
     string Moeda,
     string Tipo,
     string Status,
-    DateTimeOffset CriadoEm);
+    DateTime CriadoEm);

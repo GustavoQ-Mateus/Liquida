@@ -1,109 +1,133 @@
-<div class="page">
-  <header class="topbar">
+<header class="appbar">
+  <div class="appbar-inner">
     <div class="brand">
-      <span class="dot"></span>
-      <h1>Liquida <small>· pipeline de liquidação</small></h1>
+      <span class="mark">Liquida</span>
+      <span class="tag">pipeline de liquidação</span>
     </div>
     <div class="status" [class.on]="online()" [class.off]="!online()">
-      <span class="pulse"></span>
+      <span class="beacon"></span>
       @if (online()) {
         <span>ao vivo · {{ hora(metrics()!.capturadoEm) }}</span>
       } @else {
         <span>API offline</span>
       }
     </div>
-  </header>
+  </div>
+</header>
 
+<div class="page">
   <section class="hero">
-    <div class="hero-main">
-      <div class="hero-label">Vazão de liquidação</div>
-      <div class="hero-value">
-        <span class="rps">{{ rps() }}</span>
-        <span class="rps-unit">req/s</span>
-        <span class="rps-alvo">meta {{ RPS_ALVO }}/s</span>
-      </div>
-      <div class="bar">
-        <div class="bar-fill" [style.width.%]="rpsPct()"></div>
-      </div>
+    <div class="hero-head">
+      <span class="eyebrow"><lucide-icon name="activity" [size]="15" /> Vazão de liquidação</span>
+      <span class="meta">meta {{ RPS_ALVO }} req/s</span>
     </div>
-    <div class="hero-spark">
-      <svg viewBox="0 0 100 28" preserveAspectRatio="none" aria-label="histórico de vazão">
-        @if (sparkPath()) {
-          <path [attr.d]="sparkPath()" class="spark-line" />
-        }
-      </svg>
-      <span class="spark-caption">últimos {{ historico().length }}s</span>
+    <div class="hero-body">
+      <div class="hero-gauge">
+        <app-gauge [value]="rps()" [max]="RPS_ALVO" unit="req/s" [height]="240" />
+        <span class="gauge-cap">{{ rpsPct() }}% da meta</span>
+      </div>
+      <div class="hero-trend">
+        <span class="panel-label">Vazão · últimos {{ historico().rps.length }}s</span>
+        <app-area-chart [data]="historico().rps" [axis]="true" [height]="200" color="#16794a" />
+      </div>
     </div>
   </section>
 
-  <section class="cards">
-    <article class="card c-pendentes">
-      <div class="card-k">Pendentes</div>
-      <div class="card-v">{{ numero(metrics()?.pendentes) }}</div>
-      <div class="card-s">na origem</div>
+  <section class="metrics">
+    <article class="metric">
+      <span class="m-label"><lucide-icon name="clock" [size]="14" /> Pendentes</span>
+      <span class="m-value"><app-counter [value]="metrics()?.pendentes" /></span>
+      <div class="m-chart"><app-area-chart [data]="historico().pendentes" color="#101012" /></div>
+      <span class="m-sub">na origem</span>
     </article>
-    <article class="card c-enviadas">
-      <div class="card-k">Enviadas</div>
-      <div class="card-v">{{ numero(metrics()?.enviadas) }}</div>
-      <div class="card-s">aceitas pela API</div>
+
+    <article class="metric">
+      <span class="m-label"><lucide-icon name="send" [size]="14" /> Enviadas</span>
+      <span class="m-value"><app-counter [value]="metrics()?.enviadas" /></span>
+      <div class="m-chart"><app-area-chart [data]="historico().enviadas" color="#101012" /></div>
+      <span class="m-sub">aceitas pela API</span>
     </article>
-    <article class="card c-liquidadas">
-      <div class="card-k">Liquidadas</div>
-      <div class="card-v">{{ numero(metrics()?.liquidadas) }}</div>
-      <div class="card-s">no ledger</div>
+
+    <article class="metric flow">
+      <span class="m-label"><lucide-icon name="circle-check" [size]="14" /> Liquidadas</span>
+      <span class="m-value"><app-counter [value]="metrics()?.liquidadas" /></span>
+      <div class="m-chart"><app-area-chart [data]="historico().liquidadas" color="#16794a" /></div>
+      <span class="m-sub">no ledger</span>
     </article>
-    <article class="card c-429">
-      <div class="card-k">429</div>
-      <div class="card-v">{{ numero(metrics()?.rateLimited) }}</div>
-      <div class="card-s">rate limited</div>
+
+    <article class="metric" [class.alerta]="(metrics()?.rateLimited ?? 0) > 0">
+      <span class="m-label"><lucide-icon name="triangle-alert" [size]="14" /> 429</span>
+      <span class="m-value"><app-counter [value]="metrics()?.rateLimited" /></span>
+      <div class="m-chart">
+        <app-area-chart
+          [data]="historico().rateLimited"
+          [color]="(metrics()?.rateLimited ?? 0) > 0 ? '#c0362c' : '#101012'"
+        />
+      </div>
+      <span class="m-sub">rate limited</span>
     </article>
-    <article class="card c-fila">
-      <div class="card-k">Fila</div>
-      <div class="card-v">{{ numero(metrics()?.fila) }}</div>
-      <div class="card-s">backlog RabbitMQ</div>
+
+    <article class="metric">
+      <span class="m-label"><lucide-icon name="layers" [size]="14" /> Fila</span>
+      <span class="m-value"><app-counter [value]="metrics()?.fila" /></span>
+      <div class="m-chart"><app-area-chart [data]="historico().fila" color="#101012" /></div>
+      <span class="m-sub">backlog RabbitMQ</span>
     </article>
-    <article class="card c-dlq" [class.alerta]="(metrics()?.dlq ?? 0) > 0">
-      <div class="card-k">DLQ</div>
-      <div class="card-v">{{ numero(metrics()?.dlq) }}</div>
-      <div class="card-s">dead letter</div>
+
+    <article class="metric" [class.alerta]="(metrics()?.dlq ?? 0) > 0">
+      <span class="m-label"><lucide-icon name="inbox" [size]="14" /> DLQ</span>
+      <span class="m-value"><app-counter [value]="metrics()?.dlq" /></span>
+      <div class="m-chart">
+        <app-area-chart
+          [data]="historico().dlq"
+          [color]="(metrics()?.dlq ?? 0) > 0 ? '#c0362c' : '#101012'"
+        />
+      </div>
+      <span class="m-sub">dead letter</span>
     </article>
   </section>
 
   <section class="feeds">
     <div class="feed">
-      <h2>Liquidações recentes</h2>
-      <div class="rows">
-        @for (l of liquidacoes(); track l.transacaoId) {
-          <div class="row">
-            <code>{{ shortId(l.transacaoId) }}</code>
-            <span class="val">{{ valor(l.valor) }}</span>
-            <span class="time">{{ hora(l.liquidadoEm) }}</span>
-          </div>
-        } @empty {
-          <div class="vazio">sem liquidações ainda</div>
-        }
+      <div class="feed-head">
+        <h2><lucide-icon name="landmark" [size]="16" /> Liquidações recentes</h2>
+        <span class="count">{{ liquidacoes().length }}</span>
       </div>
+      @if (liquidacoes().length) {
+        <app-area-chart
+          [data]="liquidacoesValores()"
+          [labels]="liquidacoesLabels()"
+          [axis]="true"
+          [currency]="true"
+          color="#16794a"
+          [height]="240"
+        />
+      } @else {
+        <div class="vazio">sem liquidações ainda</div>
+      }
     </div>
 
     <div class="feed">
-      <h2>Transações recentes</h2>
-      <div class="rows">
-        @for (t of transacoes(); track t.id) {
-          <div class="row">
-            <code>{{ shortId(t.id) }}</code>
-            <span class="tipo">{{ t.tipo }}</span>
-            <span class="badge" [class.enviada]="t.status === 'ENVIADA'">{{ t.status }}</span>
-            <span class="val">{{ valor(t.valor) }}</span>
-            <span class="time">{{ hora(t.criadoEm) }}</span>
-          </div>
-        } @empty {
-          <div class="vazio">sem transações ainda</div>
-        }
+      <div class="feed-head">
+        <h2><lucide-icon name="receipt" [size]="16" /> Transações recentes</h2>
+        <span class="count">{{ transacoes().length }}</span>
       </div>
+      @if (transacoes().length) {
+        <app-area-chart
+          [data]="transacoesValores()"
+          [labels]="transacoesLabels()"
+          [axis]="true"
+          [currency]="true"
+          color="#101012"
+          [height]="240"
+        />
+      } @else {
+        <div class="vazio">sem transações ainda</div>
+      }
     </div>
   </section>
 
   <footer class="rodape">
-    Liquida v1.1.0 · 25 rps (token bucket) · fila RabbitMQ + DLQ · consumer idempotente
+    Liquida v1.1.0 · 25 rps token bucket · RabbitMQ + DLQ · consumer idempotente
   </footer>
 </div>
