@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { RATE_CEILING } from '../config';
+import { formatInteger } from '../data/format';
 import type { TimelinePoint } from '../data/types';
 import { ChartPanel } from './chart-panel';
 
@@ -10,6 +11,7 @@ interface ThroughputPanelProps {
 const PLOT_HEIGHT = 258;
 const Y_FLOOR = 30;
 const CEILING = { value: RATE_CEILING, label: `teto ${RATE_CEILING}/s` };
+const formatRate = (value: number) => `${formatInteger(value)}/s`;
 
 export function ThroughputPanel({ timeline }: ThroughputPanelProps) {
   const series = useMemo(
@@ -20,5 +22,5 @@ export function ThroughputPanel({ timeline }: ThroughputPanelProps) {
     ],
     [timeline],
   );
-  return <ChartPanel title="Vazão por segundo" className="throughput-panel" series={series} height={PLOT_HEIGHT} yFloor={Y_FLOOR} reference={CEILING} />;
+  return <ChartPanel title="Vazão por segundo" className="throughput-panel" series={series} height={PLOT_HEIGHT} yFloor={Y_FLOOR} reference={CEILING} formatPoint={formatRate} />;
 }

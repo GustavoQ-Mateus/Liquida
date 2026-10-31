@@ -1,7 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import uPlot, { type AlignedData, type Options } from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { WINDOW_SECONDS } from '../config';
+import { buildTooltip, relativeTimeLabel } from '../data/tooltip';
+import { ChartTooltip, type TooltipPosition } from './chart-tooltip';
 
 export interface ChartSeries {
   label: string;
@@ -21,7 +23,12 @@ interface TimeSeriesChartProps {
   headroom: number;
   reference?: ReferenceLine;
   formatValue: (value: number) => string;
+  formatPoint: (value: number) => string;
   ariaLabel: string;
+}
+
+interface Hover extends TooltipPosition {
+  index: number;
 }
 
 const X_SPLITS = [-90, -60, -30, 0];
@@ -32,12 +39,17 @@ const Y_AXIS_SIZE = 56;
 const LINE_WIDTH = 2;
 const DASH = [6, 4];
 const LABEL_OFFSET = 6;
+const CURSOR_POINT_SIZE = 8;
+const FLIP_RATIO = 0.6;
+const MAX_SNAP_SECONDS = 1;
+const HIDDEN_CURSOR = { left: -10, top: -10 };
 
 export function TimeSeriesChart(props: TimeSeriesChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
   const propsRef = useRef(props);
   propsRef.current = props;
+  const [hover, setHover] = useState<Hover | null>(null);
   const seriesKey = props.series.map((item) => `${item.label}:${item.colorToken}`).join('|');
 
   useEffect(() => {
@@ -45,14 +57,32 @@ export function TimeSeriesChart(props: TimeSeriesChartProps) {
     if (container === null) {
       return;
     }
-    const plot = new uPlot(buildOptions(propsRef, container.clientWidth), toAligned(propsRef.current.series), container);
+    const plot = new uPlot(
+      buildOptions(propsRef, container.clientWidth, setHover),
+      toAligned(propsRef.current.series),
+      container,
+    );
     plotRef.current = plot;
     const observer = new ResizeObserver(() => plot.setSize({ width: container.clientWidth, height: propsRef.current.height }));
     observer.observe(container);
+    const showOnTouch = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') {
+        plot.setCursor({ left: event.offsetX, top: event.offsetY });
+      }
+    };
+    const hideOnOutsideTouch = (event: PointerEvent) => {
+      if (!container.contains(event.target as Node)) {
+        plot.setCursor(HIDDEN_CURSOR);
+      }
+    };
+    plot.over.addEventListener('pointerdown', showOnTouch);
+    document.addEventListener('pointerdown', hideOnOutsideTouch);
     return () => {
+      document.removeEventListener('pointerdown', hideOnOutsideTouch);
       observer.disconnect();
       plot.destroy();
       plotRef.current = null;
+      setHover(null);
     };
   }, [seriesKey]);
 
@@ -60,18 +90,42 @@ export function TimeSeriesChart(props: TimeSeriesChartProps) {
     plotRef.current?.setData(toAligned(props.series));
   }, [props.series]);
 
-  return <div className="time-series-chart" ref={containerRef} role="img" aria-label={props.ariaLabel} />;
+  const content = useMemo(
+    () => (hover === null ? null : buildTooltip(props.series, hover.index, props.formatPoint)),
+    [hover, props.series, props.formatPoint],
+  );
+
+  return (
+    <div className="time-series-chart">
+      <div ref={containerRef} role="img" aria-label={props.ariaLabel} />
+      {content !== null && hover !== null ? <ChartTooltip content={content} position={hover} /> : null}
+    </div>
+  );
 }
 
-function buildOptions(propsRef: { current: TimeSeriesChartProps }, width: number): Options {
+function buildOptions(
+  propsRef: { current: TimeSeriesChartProps },
+  width: number,
+  onHover: (hover: Hover | null) => void,
+): Options {
   const faint = cssVar('--faint');
   const grid = cssVar('--grid');
   const { series, height } = propsRef.current;
+  const colors = series.map((item) => cssVar(item.colorToken));
   return {
     width,
     height,
     legend: { show: false },
-    cursor: { show: false },
+    cursor: {
+      x: true,
+      y: false,
+      drag: { x: false, y: false },
+      points: {
+        size: CURSOR_POINT_SIZE,
+        width: 0,
+        fill: (_plot, seriesIndex) => colors[seriesIndex - 1],
+      },
+    },
     scales: {
       x: { time: false, range: [-WINDOW_SECONDS, 0] },
       y: {
@@ -88,7 +142,7 @@ function buildOptions(propsRef: { current: TimeSeriesChartProps }, width: number
         grid: { show: false },
         ticks: { show: false },
         splits: () => X_SPLITS,
-        values: (_plot, splits) => splits.map((value) => (value === 0 ? 'agora' : `${value}s`)),
+        values: (_plot, splits) => splits.map(relativeTimeLabel),
       },
       {
         stroke: faint,
@@ -102,9 +156,29 @@ function buildOptions(propsRef: { current: TimeSeriesChartProps }, width: number
     ],
     series: [
       {},
-      ...series.map((item) => ({ label: item.label, stroke: cssVar(item.colorToken), width: LINE_WIDTH, spanGaps: false })),
+      ...series.map((item, index) => ({ label: item.label, stroke: colors[index], width: LINE_WIDTH, spanGaps: false })),
     ],
-    hooks: { draw: [(plot: uPlot) => drawReference(plot, propsRef.current.reference)] },
+    hooks: {
+      draw: [(plot: uPlot) => drawReference(plot, propsRef.current.reference)],
+      setCursor: [(plot: uPlot) => onHover(hoverFromCursor(plot))],
+    },
+  };
+}
+
+function hoverFromCursor(plot: uPlot): Hover | null {
+  const { idx, left } = plot.cursor;
+  if (idx === null || idx === undefined || left === undefined || left < 0) {
+    return null;
+  }
+  const secondsFromPoint = Math.abs(plot.posToVal(left, 'x') - plot.data[0][idx]);
+  if (secondsFromPoint > MAX_SNAP_SECONDS) {
+    return null;
+  }
+  return {
+    index: idx,
+    left: plot.over.offsetLeft + left,
+    top: plot.over.offsetTop,
+    flipped: left > plot.over.clientWidth * FLIP_RATIO,
   };
 }
 
