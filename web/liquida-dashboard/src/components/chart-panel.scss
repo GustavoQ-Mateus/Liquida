@@ -1,0 +1,19 @@
+.chart-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-width: 0;
+}
+
+.chart-panel__header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--tight) var(--pad);
+}
+
+.time-series-chart {
+  width: 100%;
+  min-width: 0;
+}
