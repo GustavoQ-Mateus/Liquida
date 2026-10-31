@@ -161,6 +161,11 @@ ul {
 }
 
 @media (max-width: 1100px) {
+  :root {
+    --fs-kpi: 20px;
+    --fs-kpi-lead: 28px;
+  }
+
   .throughput-panel,
   .pipeline-strip,
   .backlog-panel,

@@ -1,6 +1,6 @@
 .kpi-strip {
   display: grid;
-  grid-template-columns: 1.3fr repeat(7, minmax(0, 1fr));
+  grid-template-columns: 1.2fr 1.5fr repeat(6, minmax(0, 1fr));
   padding: var(--pad) 0;
 }
 
@@ -9,7 +9,7 @@
   flex-direction: column;
   gap: var(--tight);
   min-width: 0;
-  padding: 0 var(--pad);
+  padding: 0 var(--gap);
 
   & + & {
     border-left: var(--hairline) solid var(--divider);
@@ -60,6 +60,10 @@
 }
 
 @media (max-width: 1100px) {
+  .kpi__value--long {
+    font-size: var(--fs-kpi-long);
+  }
+
   .kpi-strip {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     row-gap: var(--pad);

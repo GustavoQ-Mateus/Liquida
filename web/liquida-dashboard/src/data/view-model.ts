@@ -154,7 +154,7 @@ function receivedKpi({ receivedPerSec, run }: DashboardInputs): Kpi {
     return unavailable('received', 'Recebidas/s');
   }
   const rejected = run?.rateLimited ?? null;
-  const detail = rejected === null ? '429 indisponível' : `${formatInteger(rejected)} recusadas com 429`;
+  const detail = rejected === null ? '429 indisponível' : `${formatInteger(rejected)} com 429`;
   return kpi('received', 'Recebidas/s', formatInteger(receivedPerSec), detail, { unit: `/${RATE_CEILING}` });
 }
 
@@ -173,7 +173,7 @@ function backlogKpi({ stats, snapshot }: DashboardInputs): Kpi {
   }
   const pending = stats ? formatInteger(stats.transfers.pending) : UNAVAILABLE;
   const queue = snapshot?.fila == null ? UNAVAILABLE : formatInteger(snapshot.fila);
-  return kpi('backlog', 'Backlog', formatInteger(total), `pendentes ${pending} · fila ${queue}`);
+  return kpi('backlog', 'Backlog', formatInteger(total), `BankCore ${pending} · fila ${queue}`);
 }
 
 function dlqKpi(snapshot: MetricsSnapshot | null): Kpi {
@@ -181,7 +181,7 @@ function dlqKpi(snapshot: MetricsSnapshot | null): Kpi {
     return unavailable('dlq', 'DLQ');
   }
   const retained = snapshot.dlq > 0;
-  const detail = retained ? 'mensagens para reconciliar' : 'nenhuma mensagem retida';
+  const detail = retained ? 'para reconciliar' : 'nenhuma retida';
   return kpi('dlq', 'DLQ', formatInteger(snapshot.dlq), detail, { tone: retained ? 'negative' : 'ink' });
 }
 
@@ -191,7 +191,7 @@ function ledgerKpi(stats: SimulationStats | null): Kpi {
   }
   const { accounts, divergent_accounts: divergent } = stats.ledger;
   const value = divergent === 0 ? 'Íntegro' : `${formatInteger(divergent)} divergentes`;
-  const detail = `${formatInteger(accounts)} contas conferidas`;
+  const detail = `${formatInteger(accounts)} contas`;
   return kpi('ledger', 'Ledger', value, detail, { tone: divergent === 0 ? 'ink' : 'negative' });
 }
 
@@ -200,7 +200,7 @@ function conflictsKpi(stats: SimulationStats | null): Kpi {
     return unavailable('conflicts', 'Colisões de lock');
   }
   const exhausted = stats.simulation.counters.conflict_exhausted;
-  const detail = exhausted === 0 ? 'todas resolvidas na nova tentativa' : `${formatInteger(exhausted)} esgotaram as tentativas`;
+  const detail = exhausted === 0 ? 'nenhuma esgotou' : `${formatInteger(exhausted)} esgotaram`;
   const tone = exhausted === 0 ? 'ink' : 'negative';
   return kpi('conflicts', 'Colisões de lock', formatInteger(stats.version_conflicts), detail, { tone });
 }
