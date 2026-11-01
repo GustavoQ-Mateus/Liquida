@@ -1,6 +1,6 @@
 # ADR 0003 — Fronteira com o BankCore (origem das transações)
 
-- **Status:** Aceita (v1 desacoplado, integração planejada para v-next)
+- **Status:** Aceita (v1 desacoplado, integração planejada para v-next). Errata 2026-11-01: o BankCore é em Go, não Java.
 - **Data:** 2026-08-31
 - **Contexto:** O [BankCore](../../BankCore/docs/PRD_BankCore_Go.md) é a API de núcleo bancário (Go): contas, transferências atômicas e ledger append-only. Ele é a origem natural das transações que o **Liquida** liquida. Existe a tentação de acoplar os dois já na v1.
 
@@ -10,7 +10,7 @@ Na **v1**, o Liquida é **autônomo**: lê de sua própria tabela `transacoes_pe
 ## Justificativa
 - **Prazo e foco:** o núcleo do desafio (batch → API 25 rps → fila → consumer) precisa ser entregável sem depender de subir outro sistema em outra stack.
 - **Baixo acoplamento:** manter a fronteira explícita permite plugar o BankCore depois sem reescrever o pipeline.
-- **Narrativa de portfólio:** os dois projetos juntos contam uma história poliglota (core banking em Java + settlement em .NET), mas cada um roda e é avaliável isoladamente.
+- **Narrativa de portfólio:** os dois projetos juntos contam uma história poliglota (core banking em Go + settlement em .NET), mas cada um roda e é avaliável isoladamente.
 
 ## Integração planejada (v-next)
 - **Origem:** o Producer do Liquida passa a ler as transferências pendentes de liquidação do BankCore, seja consultando um endpoint (`GET /transfers?status=PENDING`) ou lendo a tabela `Transfer`.
