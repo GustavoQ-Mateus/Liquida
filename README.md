@@ -1,105 +1,170 @@
 # Liquida
 
-Pipeline de **liquidação de transações de pagamento** em C# (.NET 8). Um batch lê transações pendentes de um banco, envia para uma API de liquidação com **rate limit de 25 req/s**, que enfileira cada uma e responde `202`; um consumer liquida de forma assíncrona, idempotente e resiliente (retry + DLQ).
+Pipeline de **liquidação de pagamentos** em **C# (.NET 8)**. Transferências pendentes são enviadas a uma API que respeita o limite de **25 requisições por segundo** de um parceiro de liquidação, enfileiradas no RabbitMQ e liquidadas por um consumer assíncrono, idempotente e resiliente, com retry e DLQ.
 
-> Projeto-vitrine de backend distribuído. Companheiro do [BankCore](../PRD_BankCore_Go.md) (núcleo bancário em Go): o BankCore origina as transações, o Liquida as liquida com backend .NET e um dashboard de tempo real em React. Juntos formam um portfólio poliglota (Go + .NET + React) de sistemas bancários.
+O Liquida é a metade de liquidação de um par. As transferências nascem no **[BankCore](https://github.com/GustavoQ-Mateus/bankcore)** (Go), e o Liquida as liquida e confirma de volta. Este repo também tem a única interface do conjunto: um **dashboard de tempo real** com fundo preto, uma linha de KPIs, uma grade de gráficos e um botão que dispara a simulação nos dois sistemas.
 
-## Arquitetura
+```mermaid
+flowchart LR
+    BC[(BankCore)] -->|GET /settlement/transfers PENDING| P[Producer, 25/s]
+    P -->|POST /liquidacoes| A[Liquida.Api, token bucket 25/s]
+    A -->|202 + publica| Q[[RabbitMQ liquidacoes]]
+    Q --> C[Consumer, 8 em paralelo]
+    C --> L[(Postgres liquidacoes)]
+    C -->|PATCH /transfers/id/settle| BC
+    C -.erro terminal.-> DLQ[[liquidacoes.dlq]]
+    A -->|SSE /metrics/stream| D[Dashboard React]
+    D -->|start, stop, reset, stats| BC
 ```
-banco (PostgreSQL) --batch--> API /liquidacoes (<=25 rps) --202--> fila (RabbitMQ) --> consumer (liquida idempotente)
-                                   ^  GET /metrics/stream (SSE 1s)
-                                   |
-                        dashboard React (tempo real) --POST /simulation/start, GET /simulation/stats--> BankCore
-```
-- **Liquida.Api** — Minimal API + rate limit Token Bucket 25/s + publisher RabbitMQ; e (v1.1) endpoints de leitura para o dashboard.
-- **Liquida.Producer** — Worker que lê `transacoes_pendentes` (Dapper) e faz POST com pacing 25/s + Polly.
-- **Liquida.Consumer** — BackgroundService que consome a fila e grava em `liquidacoes` (idempotente) + DLQ.
-- **Liquida.Shared** — DTOs e contratos.
-- **web/liquida-dashboard** (v2.1) React + Vite + TypeScript + SCSS + uPlot: a única interface do conjunto BankCore + Liquida. Fundo preto, linha de KPIs, gráficos em tempo real e o botão que inicia a simulação no BankCore.
 
-### Endpoints de leitura (v1.1, para o dashboard)
-- `GET /metrics/stream` (v2.1): Server-Sent Events, um evento `metrics` por segundo com o mesmo snapshot do `GET /metrics`. Ver ADR 0006.
-- `GET /metrics`: snapshot `{ pendentes, enviadas, liquidadas, rpsLiquidacao, fila, dlq, recebidas, rateLimited }`; `recebidas` conta os `POST /liquidacoes` aceitos com `202`. `fila`/`dlq` viram `null` se o RabbitMQ Management API estiver fora (degradação graciosa).
-- `GET /liquidacoes/recentes?limite=50` e `GET /transacoes/recentes?limite=50` — feeds. Todos são `GET` **fora** do rate limiter. Fontes de cada métrica em ADR 0004.
+## Componentes
 
-## Documentação (spec-driven)
-- **Specs (versionadas):** [`spec-v1.0.0`](docs/specs/spec-v1.0.0.md) (núcleo backend) · [`spec-v1.1.0`](docs/specs/spec-v1.1.0.md) (endpoints de leitura + dashboard) · [`spec-v2.0.0`](docs/specs/spec-v2.0.0.md) (fronteira BankCore, E2E verde) · [`spec-v2.1.0`](docs/specs/spec-v2.1.0.md) (SSE e dashboard de tempo real)
-- **Decisões de arquitetura (ADR):**
-  - [0001 — Token Bucket vs Fixed Window](docs/adr/0001-token-bucket-vs-fixed-window.md)
-  - [0002 — API enfileira e responde 202](docs/adr/0002-api-enfileira-e-responde-202.md)
-  - [0003 — Fronteira com o BankCore](docs/adr/0003-fronteira-com-bankcore.md)
-  - [0004 — Endpoints de leitura e fontes das métricas](docs/adr/0004-endpoints-de-leitura-e-fontes-de-metrica.md)
-  - [0005 — Auth serviço-a-serviço com o BankCore (JWT service-role)](docs/adr/0005-auth-servico-a-servico-com-bankcore.md)
-  - [0006: Push das métricas por Server-Sent Events](docs/adr/0006-push-de-metricas-por-sse.md)
-  - [0007: Dashboard em React + Vite + uPlot](docs/adr/0007-dashboard-react-vite-uplot.md)
+| Projeto | Papel |
+|---|---|
+| `Liquida.Api` | Minimal API: rate limit token bucket de 25/s, validação, publicação na fila e `202`. Serve as métricas do dashboard e o reset de demonstração |
+| `Liquida.Producer` | Worker que busca as pendentes no BankCore (ou na tabela local), limita a si mesmo a 25/s e envia à API com Polly honrando `Retry-After` |
+| `Liquida.Consumer` | BackgroundService que liquida em paralelo controlado, grava em `liquidacoes` de forma idempotente, confirma no BankCore e manda erros terminais para a DLQ |
+| `Liquida.Shared` | Contratos, topologia da fila e o cliente do BankCore (token, autenticação e `settle`) |
+| `web/liquida-dashboard` | Dashboard em React, Vite, TypeScript, SCSS e uPlot |
+
+## Destaques técnicos
+
+| Decisão | Por quê | Referência |
+|---|---|---|
+| Token bucket de 25/s, `429` com `Retry-After` | Respeitar o limite do parceiro. A janela fixa deixaria passar até 50 na virada da janela; o excedente recebe `429` na hora, sem acumular em memória | [ADR 0001](docs/adr/0001-token-bucket-vs-fixed-window.md) |
+| Pacing no Producer | O cliente também se limita a 25/s e repete honrando `Retry-After`, em vez de depender só da recusa do servidor | [`ProducerWorker.cs`](src/Liquida.Producer/ProducerWorker.cs) |
+| API só enfileira e responde `202` | A entrada fica rápida e previsível; picos ficam na fila, e nada se perde se o consumer cair | [ADR 0002](docs/adr/0002-api-enfileira-e-responde-202.md) |
+| Idempotência ponta a ponta | O `id` da transferência no BankCore vira o `transacao_id`, chave primária de `liquidacoes`. A coluna `settle_confirmado_em` evita repetir a confirmação, e o `settle` repetido no BankCore é inofensivo | [spec v2.0.0 §5](docs/specs/spec-v2.0.0.md) |
+| DLQ por código de erro | Erro transitório (rede, 5xx) é repetido; erro terminal (4xx) vai para a DLQ sem travar a fila. A decisão usa o `error.code` do BankCore, nunca a mensagem | [`BankCoreSettleClient.cs`](src/Liquida.Shared/BankCore/BankCoreSettleClient.cs) |
+| Auth serviço a serviço | Client credentials gera um JWT de role `SETTLEMENT`, renovado antes de vencer e de novo em `401`. O Liquida só consegue ler pendentes e confirmar | [ADR 0005](docs/adr/0005-auth-servico-a-servico-com-bankcore.md) |
+| Fronteira com o BankCore | Contrato HTTP explícito; cada sistema roda e é testável sozinho | [ADR 0003](docs/adr/0003-fronteira-com-bankcore.md) |
+| Métricas na fonte | Contadores de negócio vêm do Postgres, profundidade de fila do RabbitMQ e `429` de um contador em memória, sem tabela de métricas para manter em sincronia | [ADR 0004](docs/adr/0004-endpoints-de-leitura-e-fontes-de-metrica.md) |
+| Push por SSE | Um evento por segundo numa conexão só, com polling como fallback | [ADR 0006](docs/adr/0006-push-de-metricas-por-sse.md) |
+| Dashboard em React + uPlot | Uma tela só, sem rotas; gráficos em canvas feitos para atualizar a 1 Hz | [ADR 0007](docs/adr/0007-dashboard-react-vite-uplot.md) |
+| Reset de demonstração | Fecha a entrada, espera o trabalho em andamento terminar e só então esvazia fila, DLQ e tabelas, para a limpeza ficar realmente em zero | [ADR 0008](docs/adr/0008-reset-de-demonstracao.md) |
+| Consumer concorrente | Liquida 8 mensagens em paralelo para acompanhar os 25/s recebidos, mantendo a idempotência | [ADR 0009](docs/adr/0009-consumer-concorrente.md) |
 
 ## Como rodar
 
-### Tudo via Docker (fluxo ponta a ponta)
-Sobe RabbitMQ, PostgreSQL, API, Consumer e roda o Producer uma vez (seed + envio):
+### Os dois sistemas juntos, com o dashboard
+Pré-requisitos: Docker e Node. Com este repo e o [BankCore](https://github.com/GustavoQ-Mateus/bankcore) clonados:
+
+```bash
+cd bankcore && docker compose up -d --build
+cd ../Liquida && docker compose -f docker-compose.yml -f docker-compose.bankcore.yml up -d --build
+cd web/liquida-dashboard && npm install && npm run dev
+```
+
+Abra `http://localhost:4200` e clique em **Iniciar simulação**. O BankCore sobe primeiro porque cria a rede `bankcore-net`, que o override do Liquida usa. O BankCore semeia no boot a credencial `svc_liquida_dev`, que o override usa por padrão, então não há passo manual. `BankCore__ClientId` e `BankCore__ClientSecret` no `.env` só servem para sobrescrevê-la, e um `.env` antigo com outra credencial passa por cima do padrão.
+
+| Serviço | Endereço |
+|---|---|
+| Dashboard | http://localhost:4200 |
+| Liquida.Api | http://localhost:8080 |
+| BankCore | http://localhost:8081 |
+| RabbitMQ (guest/guest) | http://localhost:15672 |
+
+O dashboard usa essas URLs por padrão; para outras, defina `VITE_LIQUIDA_API_URL` e `VITE_BANKCORE_API_URL`.
+
+### Só o Liquida, modo autônomo
 ```bash
 docker compose up -d --build
 ```
-O Producer semeia 100 transações, envia todas a 25 rps, marca `ENVIADA`, e o Consumer liquida cada uma de forma idempotente. Ao terminar, o container `producer` encerra (exit 0); API e Consumer seguem no ar.
-
-Verificar o resultado:
+Sem o override, o Producer usa a origem local: semeia 100 transações na tabela `transacoes_pendentes`, envia todas a 25/s e encerra; o Consumer liquida cada uma. Para conferir:
 ```bash
-docker logs liquida-producer            # resumo: enviadas=100 rate_limited=0 falhas=0
-docker exec liquida-postgres psql -U liquida -d liquida -c "SELECT count(*) FROM liquidacoes;"   # 100
-docker exec liquida-rabbitmq rabbitmqctl list_queues name messages                                # filas em 0
-```
-UI do RabbitMQ: http://localhost:15672 (guest/guest). Health da API: http://localhost:8080/health.
-
-Derrubar (com volumes):
-```bash
-docker compose down -v
+docker logs liquida-producer
+docker exec liquida-postgres psql -U liquida -d liquida -c "select count(*) from liquidacoes;"
 ```
 
-### Desenvolvimento local (só a infra em Docker, serviços via dotnet)
+### Serviços fora do Docker
 ```bash
-docker compose up -d rabbitmq postgres      # só a infra
-dotnet run --project src/Liquida.Api         # API em http://localhost:5058
-dotnet run --project src/Liquida.Consumer     # consumer
-dotnet run --project src/Liquida.Producer     # seed + envio
+docker compose up -d rabbitmq postgres
+dotnet run --project src/Liquida.Api          # http://localhost:5058
+dotnet run --project src/Liquida.Consumer
+dotnet run --project src/Liquida.Producer
 ```
 
-### Dashboard de tempo real (v2.1)
-Com os dois stacks no ar (BankCore com o simulador ligado e o Liquida com o override do BankCore):
+## O dashboard
+
+**Barra superior:** estado de cada fonte (ao vivo, reconectando, indisponível), fase da simulação, seletor de cenário, botão Iniciar ou Parar e a lixeira para limpar o ambiente, com confirmação. A opção **Limpar antes de iniciar** vem marcada: cada execução começa do zero nos dois sistemas.
+
+| Cenário | Carga | O que mostra |
+|---|---|---|
+| Tranquilo | 40 contas, 500 transferências a 20/s | Abaixo do teto: tudo é liquidado na hora, sem fila |
+| Padrão | 40 contas, 1.500 a 60/s | Acima do teto: a fila cresce e drena a 25/s |
+| Estresse | 15 contas, 5.000 a 200/s | Muitas colisões de lock, fila grande e `429` |
+| Personalizado | contas, transferências, taxa e workers dentro dos limites do BankCore | Os números que você escolher |
+
+**KPIs:** liquidadas na execução, volume liquidado, recebidas por segundo contra o teto de 25, latência p95 de liquidação, backlog (pendentes no BankCore mais a fila), DLQ, integridade do ledger e colisões de lock.
+
+**Gráficos**, numa janela de 120s, com o valor do ponto ao passar o mouse:
+- vazão por segundo (criadas no BankCore, recebidas pela API e liquidadas, com a linha do teto de 25/s);
+- faixa do pipeline, com as saídas de `429` e DLQ;
+- backlog;
+- latência de liquidação p50 e p95.
+
+As métricas do Liquida chegam por SSE; o BankCore é consultado a cada segundo. Se uma fonte cai, os indicadores dela mostram "indisponível", as séries ficam com lacuna e o resto segue ao vivo.
+
+## Endpoints
+
+| Método | Rota | Uso |
+|---|---|---|
+| POST | `/liquidacoes` | Recebe uma transação, valida, enfileira e responde `202`. Limite de 25/s com `429` e `Retry-After: 1` |
+| GET | `/metrics` | Snapshot: liquidadas, liquidadas por segundo, fila, DLQ, recebidas e `429` |
+| GET | `/metrics/stream` | O mesmo snapshot por Server-Sent Events, um evento `metrics` por segundo |
+| GET | `/liquidacoes/recentes`, `/transacoes/recentes` | Últimos registros (`?limite=`, até 200) |
+| POST | `/simulacao/reset` | Limpa fila, DLQ, tabelas e contadores. Só com `Simulacao__ResetHabilitado=true` |
+| GET | `/health` | Liveness |
+
+Os `GET` ficam fora do rate limiter. No reset: `200` com o snapshot zerado, `409 reset_em_andamento` se já houver uma limpeza, `503 reset_nao_estabilizou` se o trabalho em andamento não parar em 20s. Durante a limpeza, `POST /liquidacoes` responde `409 simulacao_reiniciando`.
+
+## Testes
+
 ```bash
-cd web/liquida-dashboard
-npm install
-npm run dev                        # http://localhost:4200
-```
-Clique em **Iniciar simulação**: o BankCore gera as transferências, o Producer as drena e o Consumer confirma o settle; KPIs e gráficos se movem a cada segundo. O dashboard recebe as métricas do Liquida por SSE (`/metrics/stream`, com `GET /metrics` como fallback) e consulta `GET /simulation/stats` do BankCore a cada 1s. Se uma das fontes cair, os indicadores dela mostram `indisponível` e o resto segue.
-
-URLs padrão `http://localhost:8080` (Liquida) e `http://localhost:8081` (BankCore); para outras, defina `VITE_LIQUIDA_API_URL` e `VITE_BANKCORE_API_URL`. Verificação: `npm run build` e `npm test`.
-
-### Fluxo integrado com o BankCore (v2.0)
-Liquida como serviço de settlement do [BankCore](docs/specs/spec-v2.0.0.md): as transferências nascem `PENDING` no BankCore, o Liquida as liquida a 25 rps e confirma de volta (`PATCH /transfers/{id}/settle`), idempotente ponta a ponta.
-
-Pré-requisito: o stack do BankCore no ar na rede externa `bankcore-net` (com `LIQUIDA_INTEGRATION=external`). O BankCore semeia no boot a credencial `SETTLEMENT` do Liquida (`svc_liquida_dev`), que o override já usa por padrão; `BankCore__ClientId`/`BankCore__ClientSecret` no `.env` só servem para sobrescrevê-la (um `.env` com credencial antiga passa por cima do padrão).
-Subir o Liquida anexado à `bankcore-net`, com origem BankCore e callback ativo (override):
-```bash
-docker compose -f docker-compose.yml -f docker-compose.bankcore.yml up -d --build
-```
-O Producer lê os pendentes paginados (`GET /settlement/transfers?status=PENDING`, FIFO por `created_at ASC, id ASC`) e faz `POST /liquidacoes`; o Consumer grava em `liquidacoes` (barreira de idempotência) e, na primeira inserção, confirma no BankCore. Erros de settle seguem a tabela §4.3 da spec (200 sucesso, 401 renova token, 409/404/400/403 → DLQ, 5xx → retry). Detalhes de contrato/auth em [ADR 0003](docs/adr/0003-fronteira-com-bankcore.md) e [ADR 0005](docs/adr/0005-auth-servico-a-servico-com-bankcore.md).
-
-### Testes
-```bash
-dotnet test        # validação, rate limit + leitura fora do rate limiter (WebApplicationFactory) e idempotência (Testcontainers)
+dotnet test                                      # precisa do Docker ligado (Testcontainers)
+cd web/liquida-dashboard && npm test             # Vitest
 ```
 
-## Decisões-chave (resumo)
-- **Rate limit de 25 rps** no servidor (Token Bucket), com `429` + `Retry-After`. Ver ADR 0001.
-- **API só enfileira** e devolve `202`; liquidação assíncrona no consumer. Ver ADR 0002.
-- **Idempotência** pela chave `transacao_id` (PK em `liquidacoes`); **DLQ** para poison messages; **graceful shutdown** respeitando o `CancellationToken`.
-- **Pacing client-side** no Producer (25 rps) + Polly com backoff honrando `Retry-After` em `429`/`5xx`.
+- **Com Postgres real (Testcontainers):** idempotência do consumer e a corrida de concorrência na barreira de idempotência, reproduzida de forma determinística.
+- **Com a API em memória (WebApplicationFactory):** rate limit, leitura fora do limite e reset.
+- **Unitários:** mapeamento de centavos para decimal, roteamento do `settle` por código de erro, renovação do token, SSE, contador de recebidas, validação e resiliência do Producer.
+- **Front:** janela móvel e taxas derivadas, cenários e validação, sequência de limpeza e tooltip.
 
-## Suposições (spec §9)
-1. Banco de origem: PostgreSQL. 2. Fila: RabbitMQ real com DLQ. 3. Rate limit **global** na API (não por cliente). 4. "Liquidar" = persistir em `liquidacoes` de forma idempotente, sem sistemas externos reais.
+## Resultados medidos
 
-## Status
-- **v1.0.0** — backend completo e validado (CA1–CA5), tag `v1.0.0`.
-- **v1.1.0** — endpoints de leitura + dashboard Angular/SCSS. Código completo; `dotnet test` verde (incl. CA9: leitura fora do rate limiter). Validação E2E do dashboard contra o pipeline vivo (CA6–CA8) roda com `docker compose up` + `npm start`.
-- **v2.1.0** (em andamento): métricas por SSE, contador `recebidas`, credencial semeada pelo BankCore e dashboard de tempo real em React + Vite + uPlot.
-- **v2.0.0** — integração com o [BankCore](docs/specs/spec-v2.0.0.md): origem via `GET /settlement/transfers?status=PENDING`, callback `PATCH /transfers/{id}/settle` idempotente, auth JWT service-role (ADR 0005). E2E ponta a ponta verde (CA10–CA13): 8 `PENDING`→0 `SETTLED` a 25 rps, reexecução idempotente, `FAILED`→`409`→DLQ, refresh proativo do token. Tag `v2.0.0`.
+Registrados nos changelogs das specs, com o BankCore ligado e a simulação disparada pelo dashboard:
+
+| Medição | Resultado | Fonte |
+|---|---|---|
+| Teto de 25/s | API recebendo de 23 a 26/s em regime, média máxima em 30s de 25,4/s | [spec v2.1.0](docs/specs/spec-v2.1.0.md) |
+| Consumer concorrente, cenário Padrão | Recebidas 24,06/s contra liquidadas 23,92/s, fila máxima 25, p95 de 57,95s (antes cerca de 110s) | [spec v2.2.0](docs/specs/spec-v2.2.0.md) |
+| Cenário Estresse | 4.776 de 4.776 liquidadas, 5.022 colisões de lock, fila até 111, nada perdido | [spec v2.2.0](docs/specs/spec-v2.2.0.md) |
+| Cenário Tranquilo | 470 de 470 liquidadas, nenhum `429`, p95 de 1,66s | [spec v2.2.0](docs/specs/spec-v2.2.0.md) |
+| Limpeza com liquidações em andamento | Concluída em cerca de 15s, depois 25s com fila, DLQ e tabelas em zero | [spec v2.2.0](docs/specs/spec-v2.2.0.md) |
+
+## Documentação
+
+O projeto segue **Specification-Driven Development**: cada versão é uma spec aprovada antes do código, com critérios de aceitação verificados e registrados no changelog dela. Decisões de arquitetura viram ADRs, e a coordenação com o BankCore é feita por documentos de handoff e relatório.
+
+- **Specs:** [v1.0.0](docs/specs/spec-v1.0.0.md) · [v1.1.0](docs/specs/spec-v1.1.0.md) · [v2.0.0](docs/specs/spec-v2.0.0.md) · [v2.1.0](docs/specs/spec-v2.1.0.md) · [v2.1.1](docs/specs/spec-v2.1.1.md) · [v2.2.0](docs/specs/spec-v2.2.0.md)
+- **ADRs:** [0001](docs/adr/0001-token-bucket-vs-fixed-window.md) · [0002](docs/adr/0002-api-enfileira-e-responde-202.md) · [0003](docs/adr/0003-fronteira-com-bankcore.md) · [0004](docs/adr/0004-endpoints-de-leitura-e-fontes-de-metrica.md) · [0005](docs/adr/0005-auth-servico-a-servico-com-bankcore.md) · [0006](docs/adr/0006-push-de-metricas-por-sse.md) · [0007](docs/adr/0007-dashboard-react-vite-uplot.md) · [0008](docs/adr/0008-reset-de-demonstracao.md) · [0009](docs/adr/0009-consumer-concorrente.md)
+- **Integração com o BankCore:** [handoff v1.1.0](docs/handoff-bankcore-v1.1.0.md) · [relatório](docs/relatorio-para-bankcore.md) · [relatório v2.0.0](docs/relatorio-para-bankcore-v2.0.0.md)
+
+## Versões
+
+| Versão | O que entrou |
+|---|---|
+| 1.0.0 | Pipeline: API com rate limit de 25/s, fila com DLQ, consumer idempotente e Producer com pacing (tag `v1.0.0`) |
+| 1.1.0 | Endpoints de leitura e o primeiro dashboard, em Angular, substituído na 2.1.0 (tag `v1.1.0`) |
+| 2.0.0 | Integração com o BankCore: origem das pendentes, `settle` idempotente e auth serviço a serviço (tag `v2.0.0`) |
+| 2.1.0 | Métricas por SSE, contador de recebidas, credencial semeada pelo BankCore e dashboard refeito em React (tag `v2.1.0`) |
+| 2.1.1 | Valor do ponto ao passar o mouse nos gráficos (tag `v2.1.1`) |
+| 2.2.0 | Lixeira, cenários, limpar antes de iniciar, Producer resiliente e Consumer concorrente (tag `v2.2.0`) |
+
+## Stack
+
+.NET 8 · ASP.NET Core Minimal API · Dapper 2.1 · Npgsql 10 · RabbitMQ 3.13 (RabbitMQ.Client 7.2) · PostgreSQL 16 · Polly · Serilog · xUnit · Testcontainers · React 19 · Vite 8 · TypeScript 5.9 · uPlot 1.6 · Vitest 5 · Docker Compose
+
+## Limites
+
+Projeto de demonstração: "liquidar" é gravar em `liquidacoes` e confirmar no BankCore, sem adquirente real. A moeda é única (BRL), e o rate limit é global, não por cliente. O reset apaga dados e só existe com `Simulacao__ResetHabilitado=true`, que o compose de integração liga. As credenciais dos composes são de desenvolvimento. O dashboard roda com `npm run dev` e não tem imagem Docker. Este repo ainda não tem CI.
