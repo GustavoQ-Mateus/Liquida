@@ -80,4 +80,24 @@ public class ConsumerIdempotencyTests : IAsyncLifetime
 
         Assert.Equal(RegistroLiquidacao.JaConfirmada, reprocesso);
     }
+
+    [Fact]
+    public async Task Registro_Concorrente_Ainda_Invisivel_Retorna_PendenteConfirmacao()
+    {
+        var msg = new LiquidacaoMessage(
+            Guid.NewGuid(), 10m, "BRL", "a", "b", null, DateTimeOffset.UtcNow);
+        await using var concorrente = new NpgsqlConnection(_postgres.GetConnectionString());
+        await concorrente.OpenAsync();
+        await using var transacao = await concorrente.BeginTransactionAsync();
+        await concorrente.ExecuteAsync(
+            "INSERT INTO liquidacoes (transacao_id, valor) VALUES (@Id, @Valor)",
+            new { msg.Id, msg.Valor },
+            transacao);
+
+        var registro = _repository.RegistrarAsync(msg, CancellationToken.None);
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+        await transacao.CommitAsync();
+
+        Assert.Equal(RegistroLiquidacao.PendenteConfirmacao, await registro);
+    }
 }
