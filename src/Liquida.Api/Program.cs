@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.RateLimiting;
 using Liquida.Api.Messaging;
 using Liquida.Api.Reading;
+using Liquida.Api.Simulation;
 using Liquida.Api.Validation;
 using Liquida.Shared.Contracts;
 using Liquida.Shared.Messaging;
@@ -28,7 +29,17 @@ builder.Services.AddSingleton<IMetricsRepository, MetricsRepository>();
 builder.Services.AddHttpClient<QueueDepthClient>();
 builder.Services.AddScoped<MetricsService>();
 
+builder.Services.AddSingleton<ResetGate>();
+var resetHabilitado = builder.Configuration.GetValue<bool>("Simulacao:ResetHabilitado");
+if (resetHabilitado)
+{
+    builder.Services.AddSingleton<IQueueMaintenance, RabbitMqQueueMaintenance>();
+    builder.Services.AddSingleton<IResetRepository, ResetRepository>();
+    builder.Services.AddSingleton<SimulationResetService>();
+}
+
 const string DashboardCors = "dashboard";
+const string ResetCors = "dashboard-reset";
 var dashboardOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
     ?? new[] { "http://localhost:4200" };
 builder.Services.AddCors(options =>
@@ -37,6 +48,9 @@ builder.Services.AddCors(options =>
         .WithOrigins(dashboardOrigins)
         .WithMethods("GET")
         .AllowAnyHeader());
+    options.AddPolicy(ResetCors, policy => policy
+        .WithOrigins(dashboardOrigins)
+        .WithMethods("POST"));
 });
 
 const string LiquidacoesPolicy = "liquidacoes";
@@ -84,12 +98,47 @@ app.MapGet("/transacoes/recentes", async (
         IMetricsRepository repo, CancellationToken ct, int limite = 50) =>
     Results.Ok(await repo.TransacoesRecentesAsync(NormalizarLimite(limite), ct)));
 
+if (resetHabilitado)
+{
+    app.MapPost("/simulacao/reset", async (
+            SimulationResetService reset,
+            MetricsService metrics,
+            CancellationToken cancellationToken) =>
+        {
+            var resultado = await reset.ResetarAsync(cancellationToken);
+            return resultado switch
+            {
+                ResultadoReset.EmAndamento => Results.Json(
+                    new { error = "reset_em_andamento", message = "Já existe uma limpeza em andamento." },
+                    statusCode: StatusCodes.Status409Conflict),
+                ResultadoReset.NaoEstabilizou => Results.Json(
+                    new
+                    {
+                        error = "reset_nao_estabilizou",
+                        message = "Liquidações continuam chegando; pare a simulação e tente de novo."
+                    },
+                    statusCode: StatusCodes.Status503ServiceUnavailable),
+                _ => Results.Ok((await metrics.SnapshotAsync(cancellationToken)) with { Fila = 0, Dlq = 0 })
+            };
+        })
+        .RequireCors(ResetCors);
+}
+
 app.MapPost("/liquidacoes", async (
         LiquidacaoRequest request,
         IMessagePublisher publisher,
         ReceivedCounter received,
+        ResetGate gate,
         CancellationToken cancellationToken) =>
     {
+        if (gate.EstaFechado)
+        {
+            gate.RegistrarBarrada();
+            return Results.Json(
+                new { error = "simulacao_reiniciando", message = "Simulação sendo reiniciada; tente de novo em instantes." },
+                statusCode: StatusCodes.Status409Conflict);
+        }
+
         if (!LiquidacaoRequestValidator.TryValidate(request, out var errors))
         {
             return Results.ValidationProblem(errors);
