@@ -3,7 +3,12 @@ networks:
     external: true
 
 services:
+  api:
+    environment:
+      Simulacao__ResetHabilitado: "true"
+
   consumer:
+    restart: unless-stopped
     networks:
       - default
       - bankcore-net
@@ -15,6 +20,7 @@ services:
       BankCore__ClientSecret: ${BankCore__ClientSecret:-dev-liquida-secret-change-me}
 
   producer:
+    restart: unless-stopped
     networks:
       - default
       - bankcore-net
