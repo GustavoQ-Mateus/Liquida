@@ -11,17 +11,20 @@ public sealed class MetricsService
     private readonly IMetricsRepository _repository;
     private readonly QueueDepthClient _queues;
     private readonly RateLimitCounter _rateLimited;
+    private readonly ReceivedCounter _received;
     private readonly TimeProvider _clock;
 
     public MetricsService(
         IMetricsRepository repository,
         QueueDepthClient queues,
         RateLimitCounter rateLimited,
+        ReceivedCounter received,
         TimeProvider clock)
     {
         _repository = repository;
         _queues = queues;
         _rateLimited = rateLimited;
+        _received = received;
         _clock = clock;
     }
 
@@ -42,6 +45,7 @@ public sealed class MetricsService
             RpsLiquidacao: c.RpsLiquidacao,
             Fila: filaTask.Result,
             Dlq: dlqTask.Result,
+            Recebidas: _received.Total,
             RateLimited: _rateLimited.Total);
     }
 }

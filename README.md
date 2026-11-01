@@ -2,33 +2,36 @@
 
 Pipeline de **liquidação de transações de pagamento** em C# (.NET 8). Um batch lê transações pendentes de um banco, envia para uma API de liquidação com **rate limit de 25 req/s**, que enfileira cada uma e responde `202`; um consumer liquida de forma assíncrona, idempotente e resiliente (retry + DLQ).
 
-> Projeto-vitrine de backend distribuído. Companheiro do [BankCore](../PRD_BankCore_Go.md) (núcleo bancário em Go): o BankCore origina as transações, o Liquida as liquida com backend .NET e dashboard Angular/SCSS. Juntos formam um portfólio poliglota (Go + .NET + Angular) de sistemas bancários.
+> Projeto-vitrine de backend distribuído. Companheiro do [BankCore](../PRD_BankCore_Go.md) (núcleo bancário em Go): o BankCore origina as transações, o Liquida as liquida com backend .NET e um dashboard de tempo real em React. Juntos formam um portfólio poliglota (Go + .NET + React) de sistemas bancários.
 
 ## Arquitetura
 ```
 banco (PostgreSQL) --batch--> API /liquidacoes (<=25 rps) --202--> fila (RabbitMQ) --> consumer (liquida idempotente)
-                                   ^  GET /metrics, /*/recentes
+                                   ^  GET /metrics/stream (SSE 1s)
                                    |
-                        dashboard Angular/SCSS (polling 1s)
+                        dashboard React (tempo real) --POST /simulation/start, GET /simulation/stats--> BankCore
 ```
 - **Liquida.Api** — Minimal API + rate limit Token Bucket 25/s + publisher RabbitMQ; e (v1.1) endpoints de leitura para o dashboard.
 - **Liquida.Producer** — Worker que lê `transacoes_pendentes` (Dapper) e faz POST com pacing 25/s + Polly.
 - **Liquida.Consumer** — BackgroundService que consome a fila e grava em `liquidacoes` (idempotente) + DLQ.
 - **Liquida.Shared** — DTOs e contratos.
-- **web/liquida-dashboard** (v1.1) — Angular 20 + SCSS: visualiza o pipeline em tempo quase real (pendentes, enviadas, liquidadas, `429`, fila, DLQ e vazão rps).
+- **web/liquida-dashboard** (v2.1) React + Vite + TypeScript + SCSS + uPlot: a única interface do conjunto BankCore + Liquida. Fundo preto, linha de KPIs, gráficos em tempo real e o botão que inicia a simulação no BankCore.
 
 ### Endpoints de leitura (v1.1, para o dashboard)
-- `GET /metrics` — snapshot: `{ pendentes, enviadas, liquidadas, rpsLiquidacao, fila, dlq, rateLimited }`. `fila`/`dlq` viram `null` se o RabbitMQ Management API estiver fora (degradação graciosa).
+- `GET /metrics/stream` (v2.1): Server-Sent Events, um evento `metrics` por segundo com o mesmo snapshot do `GET /metrics`. Ver ADR 0006.
+- `GET /metrics`: snapshot `{ pendentes, enviadas, liquidadas, rpsLiquidacao, fila, dlq, recebidas, rateLimited }`; `recebidas` conta os `POST /liquidacoes` aceitos com `202`. `fila`/`dlq` viram `null` se o RabbitMQ Management API estiver fora (degradação graciosa).
 - `GET /liquidacoes/recentes?limite=50` e `GET /transacoes/recentes?limite=50` — feeds. Todos são `GET` **fora** do rate limiter. Fontes de cada métrica em ADR 0004.
 
 ## Documentação (spec-driven)
-- **Specs (versionadas):** [`spec-v1.0.0`](docs/specs/spec-v1.0.0.md) (núcleo backend) · [`spec-v1.1.0`](docs/specs/spec-v1.1.0.md) (endpoints de leitura + dashboard) · [`spec-v2.0.0`](docs/specs/spec-v2.0.0.md) (fronteira BankCore — E2E verde)
+- **Specs (versionadas):** [`spec-v1.0.0`](docs/specs/spec-v1.0.0.md) (núcleo backend) · [`spec-v1.1.0`](docs/specs/spec-v1.1.0.md) (endpoints de leitura + dashboard) · [`spec-v2.0.0`](docs/specs/spec-v2.0.0.md) (fronteira BankCore, E2E verde) · [`spec-v2.1.0`](docs/specs/spec-v2.1.0.md) (SSE e dashboard de tempo real)
 - **Decisões de arquitetura (ADR):**
   - [0001 — Token Bucket vs Fixed Window](docs/adr/0001-token-bucket-vs-fixed-window.md)
   - [0002 — API enfileira e responde 202](docs/adr/0002-api-enfileira-e-responde-202.md)
   - [0003 — Fronteira com o BankCore](docs/adr/0003-fronteira-com-bankcore.md)
   - [0004 — Endpoints de leitura e fontes das métricas](docs/adr/0004-endpoints-de-leitura-e-fontes-de-metrica.md)
   - [0005 — Auth serviço-a-serviço com o BankCore (JWT service-role)](docs/adr/0005-auth-servico-a-servico-com-bankcore.md)
+  - [0006: Push das métricas por Server-Sent Events](docs/adr/0006-push-de-metricas-por-sse.md)
+  - [0007: Dashboard em React + Vite + uPlot](docs/adr/0007-dashboard-react-vite-uplot.md)
 
 ## Como rodar
 
@@ -60,27 +63,21 @@ dotnet run --project src/Liquida.Consumer     # consumer
 dotnet run --project src/Liquida.Producer     # seed + envio
 ```
 
-### Dashboard (v1.1, Angular + SCSS)
-Com a API no ar (Docker ou `dotnet run`), aponte o dashboard para ela e suba o dev server:
+### Dashboard de tempo real (v2.1)
+Com os dois stacks no ar (BankCore com o simulador ligado e o Liquida com o override do BankCore):
 ```bash
 cd web/liquida-dashboard
 npm install
-npm start                          # http://localhost:4200
+npm run dev                        # http://localhost:4200
 ```
-Por padrão consome `http://localhost:8080` (a API no Docker). Para outra URL, sobrescreva em runtime sem rebuild adicionando ao `src/index.html`:
-```html
-<script>window.LIQUIDA_API_BASE = 'http://localhost:5058'</script>
-```
-A API libera CORS para `http://localhost:4200` (configurável em `Cors:AllowedOrigins`). O dashboard faz polling a cada 1s; se a API cair, mostra "API offline" sem quebrar.
+Clique em **Iniciar simulação**: o BankCore gera as transferências, o Producer as drena e o Consumer confirma o settle; KPIs e gráficos se movem a cada segundo. O dashboard recebe as métricas do Liquida por SSE (`/metrics/stream`, com `GET /metrics` como fallback) e consulta `GET /simulation/stats` do BankCore a cada 1s. Se uma das fontes cair, os indicadores dela mostram `indisponível` e o resto segue.
+
+URLs padrão `http://localhost:8080` (Liquida) e `http://localhost:8081` (BankCore); para outras, defina `VITE_LIQUIDA_API_URL` e `VITE_BANKCORE_API_URL`. Verificação: `npm run build` e `npm test`.
 
 ### Fluxo integrado com o BankCore (v2.0)
 Liquida como serviço de settlement do [BankCore](docs/specs/spec-v2.0.0.md): as transferências nascem `PENDING` no BankCore, o Liquida as liquida a 25 rps e confirma de volta (`PATCH /transfers/{id}/settle`), idempotente ponta a ponta.
 
-Pré-requisitos: o stack do BankCore no ar na rede externa `bankcore-net` (com `LIQUIDA_INTEGRATION=external`) e uma credencial de service-client com role `SETTLEMENT` em `.env` (fora do git):
-```bash
-BankCore__ClientId=svc_...
-BankCore__ClientSecret=...
-```
+Pré-requisito: o stack do BankCore no ar na rede externa `bankcore-net` (com `LIQUIDA_INTEGRATION=external`). O BankCore semeia no boot a credencial `SETTLEMENT` do Liquida (`svc_liquida_dev`), que o override já usa por padrão; `BankCore__ClientId`/`BankCore__ClientSecret` no `.env` só servem para sobrescrevê-la (um `.env` com credencial antiga passa por cima do padrão).
 Subir o Liquida anexado à `bankcore-net`, com origem BankCore e callback ativo (override):
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.bankcore.yml up -d --build
@@ -104,4 +101,5 @@ dotnet test        # validação, rate limit + leitura fora do rate limiter (Web
 ## Status
 - **v1.0.0** — backend completo e validado (CA1–CA5), tag `v1.0.0`.
 - **v1.1.0** — endpoints de leitura + dashboard Angular/SCSS. Código completo; `dotnet test` verde (incl. CA9: leitura fora do rate limiter). Validação E2E do dashboard contra o pipeline vivo (CA6–CA8) roda com `docker compose up` + `npm start`.
+- **v2.1.0** (em andamento): métricas por SSE, contador `recebidas`, credencial semeada pelo BankCore e dashboard de tempo real em React + Vite + uPlot.
 - **v2.0.0** — integração com o [BankCore](docs/specs/spec-v2.0.0.md): origem via `GET /settlement/transfers?status=PENDING`, callback `PATCH /transfers/{id}/settle` idempotente, auth JWT service-role (ADR 0005). E2E ponta a ponta verde (CA10–CA13): 8 `PENDING`→0 `SETTLED` a 25 rps, reexecução idempotente, `FAILED`→`409`→DLQ, refresh proativo do token. Tag `v2.0.0`.

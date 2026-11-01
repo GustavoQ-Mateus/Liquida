@@ -9,6 +9,7 @@ public sealed record MetricsSnapshot(
     long RpsLiquidacao,
     int? Fila,
     int? Dlq,
+    long Recebidas,
     long RateLimited);
 
 /// <summary>Contadores vindos do PostgreSQL (spec-v1.1.0 §3).</summary>
@@ -21,7 +22,7 @@ public sealed record ContadoresPostgres(
 public sealed record LiquidacaoRecente(
     Guid TransacaoId,
     decimal Valor,
-    DateTimeOffset LiquidadoEm);
+    DateTime LiquidadoEm);
 
 public sealed record TransacaoRecente(
     Guid Id,
@@ -29,4 +30,4 @@ public sealed record TransacaoRecente(
     string Moeda,
     string Tipo,
     string Status,
-    DateTimeOffset CriadoEm);
+    DateTime CriadoEm);

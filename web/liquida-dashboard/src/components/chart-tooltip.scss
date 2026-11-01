@@ -1,0 +1,49 @@
+.time-series-chart {
+  position: relative;
+
+  .u-cursor-x {
+    border-right: var(--hairline) solid var(--muted);
+  }
+}
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 1;
+  min-width: var(--tooltip-min-width);
+  padding: var(--tooltip-pad);
+  border-radius: var(--radius-tooltip);
+  background: var(--raised);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.chart-tooltip__time {
+  display: block;
+  margin-bottom: var(--tight);
+  color: var(--muted);
+}
+
+.chart-tooltip__rows {
+  display: grid;
+  gap: var(--tight);
+}
+
+.chart-tooltip__row {
+  display: grid;
+  grid-template-columns: var(--swatch) 1fr auto;
+  align-items: center;
+  gap: var(--inline);
+}
+
+.chart-tooltip__label {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.chart-tooltip__value {
+  padding-left: var(--gap);
+  text-align: right;
+  white-space: nowrap;
+}

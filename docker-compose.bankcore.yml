@@ -11,8 +11,8 @@ services:
       ConnectionStrings__Postgres: Host=liquida-postgres;Port=5432;Database=${POSTGRES_DB:-liquida};Username=${POSTGRES_USER:-liquida};Password=${POSTGRES_PASSWORD:-liquida}
       BankCore__CallbackAtivo: "true"
       BankCore__BaseUrl: http://bankcore-api:8080
-      BankCore__ClientId: ${BankCore__ClientId}
-      BankCore__ClientSecret: ${BankCore__ClientSecret}
+      BankCore__ClientId: ${BankCore__ClientId:-svc_liquida_dev}
+      BankCore__ClientSecret: ${BankCore__ClientSecret:-dev-liquida-secret-change-me}
 
   producer:
     networks:
@@ -23,5 +23,5 @@ services:
       Producer__PollDelaySeconds: "5"
       Producer__ApiBaseUrl: http://liquida-api:8080
       BankCore__BaseUrl: http://bankcore-api:8080
-      BankCore__ClientId: ${BankCore__ClientId}
-      BankCore__ClientSecret: ${BankCore__ClientSecret}
+      BankCore__ClientId: ${BankCore__ClientId:-svc_liquida_dev}
+      BankCore__ClientSecret: ${BankCore__ClientSecret:-dev-liquida-secret-change-me}

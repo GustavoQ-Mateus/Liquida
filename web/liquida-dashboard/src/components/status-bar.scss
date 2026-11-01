@@ -1,0 +1,38 @@
+.status-bar-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  margin-top: auto;
+}
+
+.status-bar {
+  display: flex;
+  gap: var(--seam);
+  height: var(--status-bar-height);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.status-bar--empty {
+  margin-top: auto;
+  background: var(--raised);
+}
+
+.status-bar__part,
+.legend__swatch {
+  &--settled {
+    background: var(--data);
+  }
+
+  &--pending {
+    background: var(--data-2);
+  }
+
+  &--failed {
+    background: var(--negative);
+  }
+}
+
+.status-bar__part {
+  flex-basis: 0;
+}

@@ -1,0 +1,9 @@
+export const LIQUIDA_API_URL: string = import.meta.env.VITE_LIQUIDA_API_URL ?? 'http://localhost:8080';
+export const BANKCORE_API_URL: string = import.meta.env.VITE_BANKCORE_API_URL ?? 'http://localhost:8081';
+export const TICK_MS = 1000;
+export const WINDOW_SECONDS = 120;
+export const RATE_CEILING = 25;
+export const REQUEST_TIMEOUT_MS = 2000;
+export const STALE_STREAM_MS = 3000;
+export const FAILURES_UNTIL_UNAVAILABLE = 3;
+export const ERROR_VISIBLE_MS = 5000;
