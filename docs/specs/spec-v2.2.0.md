@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | **Versão** | 2.2.0 |
-| **Status** | Aprovada (2026-10-31, com as três divergências de contrato e ADRs 0008/0009) |
+| **Status** | Entregue (2026-11-01). Aprovada com as três divergências de contrato e ADRs 0008/0009; CA30 corrigido por decisão do usuário; CA28 a CA36 verificados |
 | **Data** | 2026-10-31 |
 | **Autor** | Gustavo Queiroz Mateus |
 | **Domínio** | Liquidação/compensação de transações de pagamento |
@@ -251,6 +251,11 @@ Branch `feature/limpeza-e-cenarios` a partir de `feature/dashboard-tempo-real`; 
 - **D23** No compose de integração o Producer revarre pendentes a cada 1s (`Producer__PollDelaySeconds=1`), no lugar dos 5s da D7. O pacing segue em 25/s para o Estresse continuar mostrando 429.
 
 ## 11. Changelog
+- **2.2.0 (2026-11-01, Entregue)** Reteste com o BankCore corrigido (4dd117e: `LOCK TABLE transfers, entries, accounts` na ordem do settle e retry em `40P01`/`55P03`):
+  - **Limpeza com settles em voo:** três ciclos pela lixeira, cada um aos ~35s de um Padrão, com o Liquida confirmando 8 a 24 settles/s e fila de 9 a 11. Os seis `POST /simulation/reset` do período (três com settles em voo, três de "limpar antes de iniciar") responderam `200` em 0,5 a 0,8s; nenhum `500` no log do BankCore e nenhum erro na tela. O achado do deadlock está fechado.
+  - **CA44 do BankCore** (execução `cf106095`, com limpeza antes): antes do start, BankCore e Liquida zerados (`pending`/`settled`/`failed` 0, contas 0, `liquidadas`/`fila`/`dlq`/`recebidas` 0). Ao fim, 1428/1428 `SETTLED`, `pending` 0, `divergent_accounts` 0, DLQ 0, p95 43,7s.
+  - **Interferência registrada:** uma tentativa anterior (execução iniciada 05:05:25Z) foi apagada por resets, starts e stops de outros clientes (um navegador e outra sessão) entre 05:06:08Z e 05:08:04Z. O sistema se comportou como especificado: o portão barrou com `409` os envios em voo, a limpeza estabilizou e o estado ficou zerado. A execução foi refeita sem interferência.
+  - **Verificação final:** `origin/main` sem novidades; `dotnet build` 0 avisos, `dotnet test` 44/44, `npm run build` sem avisos, `npm test` 25/25.
 - **2.2.0 (2026-11-01, correção do CA30 por decisão do usuário)**
   - **Por que mudou:** o critério do Tranquilo ("recebidas ≤ 20/s, fila perto de 0, nenhum 429") era mais rígido que o desenho. Com o Producer esperando 5s quando o backlog zera (D7), o acumulado é drenado em rajadas a 25/s, e o balde de 25 do Producer e o balde de 25 da API (ADR 0001) se desalinham em alguns 429, todos reenviados pelo Polly e sem perda.
   - **O que mudou:** o critério virou "sem fila sustentada; 429 ocasional aceito, sem perda", e o compose de integração passou a revarrer a cada 1s (D23).
