@@ -6,6 +6,7 @@ import type { MetricsSnapshot, SimulationPhase, SimulationStats, SourceState } f
 export const UNAVAILABLE = 'indisponível';
 
 const CONNECTING = 'Conectando';
+const CLEANING = 'Limpando ambiente…';
 
 export type Tone = 'ink' | 'data' | 'negative' | 'faint';
 
@@ -25,6 +26,8 @@ export interface DashboardInputs {
   run: RunTotals | null;
   receivedPerSec: number | null;
   bankcoreState: SourceState;
+  cleaning: boolean;
+  scenarioSummary: string;
 }
 
 export interface PipelineStage {
@@ -52,7 +55,10 @@ export function isActive(phase: SimulationPhase): boolean {
   return phase === 'seeding' || phase === 'running';
 }
 
-export function phaseLabel({ stats, bankcoreState }: DashboardInputs, now: number): string {
+export function phaseLabel({ stats, bankcoreState, cleaning }: DashboardInputs, now: number): string {
+  if (cleaning) {
+    return CLEANING;
+  }
   if (stats === null) {
     return bankcoreState === 'conectando' ? CONNECTING : 'Fase indisponível';
   }
@@ -87,8 +93,7 @@ export function buildFinding(inputs: DashboardInputs): string {
   }
   const ledger = ledgerPhrase(stats);
   if (!run.scoped) {
-    const transfers = formatInteger(stats.simulation.config.transfers);
-    return `Nenhuma execução acompanhada nesta aba. Iniciar dispara ${transfers} transferências no BankCore. ${ledger}.`;
+    return `${inputs.scenarioSummary} ${ledger}.`;
   }
   const settled = `${formatInteger(run.settled)} de ${formatInteger(stats.simulation.counters.accepted)} liquidadas`;
   const total = backlog(stats, snapshot) ?? stats.transfers.pending;

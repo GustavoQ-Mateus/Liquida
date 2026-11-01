@@ -4,13 +4,14 @@ import { isActive } from '../data/view-model';
 interface SimulationControlProps {
   phase: SimulationPhase | null;
   busy: boolean;
+  startBlocked: boolean;
   onStart: () => void;
   onStop: () => void;
 }
 
-export function SimulationControl({ phase, busy, onStart, onStop }: SimulationControlProps) {
+export function SimulationControl({ phase, busy, startBlocked, onStart, onStop }: SimulationControlProps) {
   const running = phase !== null && isActive(phase);
-  const disabled = busy || phase === null;
+  const disabled = busy || phase === null || (!running && startBlocked);
   return (
     <button
       type="button"

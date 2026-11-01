@@ -3,7 +3,12 @@ networks:
     external: true
 
 services:
+  api:
+    environment:
+      Simulacao__ResetHabilitado: "true"
+
   consumer:
+    restart: unless-stopped
     networks:
       - default
       - bankcore-net
@@ -15,12 +20,13 @@ services:
       BankCore__ClientSecret: ${BankCore__ClientSecret:-dev-liquida-secret-change-me}
 
   producer:
+    restart: unless-stopped
     networks:
       - default
       - bankcore-net
     environment:
       Producer__Origem: BankCore
-      Producer__PollDelaySeconds: "5"
+      Producer__PollDelaySeconds: "1"
       Producer__ApiBaseUrl: http://liquida-api:8080
       BankCore__BaseUrl: http://bankcore-api:8080
       BankCore__ClientId: ${BankCore__ClientId:-svc_liquida_dev}

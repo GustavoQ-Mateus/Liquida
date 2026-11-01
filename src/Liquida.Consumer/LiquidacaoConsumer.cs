@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Liquida.Consumer.Data;
-using Liquida.Shared.BankCore;
 using Liquida.Shared.Contracts;
 using Liquida.Shared.Messaging;
 using Microsoft.Extensions.Options;
@@ -12,8 +11,7 @@ namespace Liquida.Consumer;
 
 public sealed class LiquidacaoConsumer : BackgroundService
 {
-    private const int MaxTentativas = 3;
-    private const string SettlementRefPrefixo = "liquida:";
+    public const int ProcessamentoParalelo = 8;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -22,23 +20,24 @@ public sealed class LiquidacaoConsumer : BackgroundService
 
     private readonly RabbitMqOptions _rabbit;
     private readonly IServiceProvider _services;
+    private readonly LiquidacaoProcessor _processor;
     private readonly ILogger<LiquidacaoConsumer> _logger;
-    private readonly SemaphoreSlim _emProcessamento = new(1, 1);
+    private readonly SemaphoreSlim _emProcessamento = new(ProcessamentoParalelo, ProcessamentoParalelo);
 
     private IConnection? _connection;
     private IChannel? _channel;
 
-    private long _liquidadas;
-    private long _duplicadas;
     private long _paraDlq;
 
     public LiquidacaoConsumer(
         IOptions<RabbitMqOptions> rabbit,
         IServiceProvider services,
+        LiquidacaoProcessor processor,
         ILogger<LiquidacaoConsumer> logger)
     {
         _rabbit = rabbit.Value;
         _services = services;
+        _processor = processor;
         _logger = logger;
     }
 
@@ -56,7 +55,8 @@ public sealed class LiquidacaoConsumer : BackgroundService
             HostName = _rabbit.Host,
             Port = _rabbit.Port,
             UserName = _rabbit.User,
-            Password = _rabbit.Password
+            Password = _rabbit.Password,
+            ConsumerDispatchConcurrency = ProcessamentoParalelo
         };
 
         _connection = await ConnectWithRetryAsync(factory, stoppingToken);
@@ -78,7 +78,7 @@ public sealed class LiquidacaoConsumer : BackgroundService
             arguments: null,
             cancellationToken: stoppingToken);
 
-        await _channel.BasicQosAsync(prefetchSize: 0, prefetchCount: 1, global: false, cancellationToken: stoppingToken);
+        await _channel.BasicQosAsync(prefetchSize: 0, prefetchCount: ProcessamentoParalelo, global: false, cancellationToken: stoppingToken);
 
         var consumer = new AsyncEventingBasicConsumer(_channel);
         consumer.ReceivedAsync += OnReceivedAsync;
@@ -99,13 +99,15 @@ public sealed class LiquidacaoConsumer : BackgroundService
         {
         }
 
-        await _emProcessamento.WaitAsync(CancellationToken.None);
-        _emProcessamento.Release();
+        for (var slot = 0; slot < ProcessamentoParalelo; slot++)
+        {
+            await _emProcessamento.WaitAsync(CancellationToken.None);
+        }
 
         _logger.LogInformation(
             "Consumer encerrando. liquidadas={Liquidadas} duplicadas={Duplicadas} dlq={Dlq}",
-            Interlocked.Read(ref _liquidadas),
-            Interlocked.Read(ref _duplicadas),
+            _processor.Liquidadas,
+            _processor.Duplicadas,
             Interlocked.Read(ref _paraDlq));
     }
 
@@ -160,7 +162,7 @@ public sealed class LiquidacaoConsumer : BackgroundService
                 return;
             }
 
-            var sucesso = await ProcessarComRetryAsync(message);
+            var sucesso = await _processor.ProcessarAsync(message);
             if (sucesso)
             {
                 await _channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
@@ -176,88 +178,6 @@ public sealed class LiquidacaoConsumer : BackgroundService
         finally
         {
             _emProcessamento.Release();
-        }
-    }
-
-    private async Task<bool> ProcessarComRetryAsync(LiquidacaoMessage message)
-    {
-        for (var tentativa = 1; tentativa <= MaxTentativas; tentativa++)
-        {
-            try
-            {
-                using var scope = _services.CreateScope();
-                var repo = scope.ServiceProvider.GetRequiredService<ILiquidacaoRepository>();
-                var settle = scope.ServiceProvider.GetService<IBankCoreSettleClient>();
-
-                var estado = await repo.RegistrarAsync(message, CancellationToken.None);
-
-                if (settle is null)
-                {
-                    RegistrarLocal(estado, message);
-                    return true;
-                }
-
-                if (estado == RegistroLiquidacao.JaConfirmada)
-                {
-                    Interlocked.Increment(ref _duplicadas);
-                    _logger.LogInformation("Transação {TransacaoId} já confirmada; ignorada (idempotência).",
-                        message.Id);
-                    return true;
-                }
-
-                var resultado = await settle.SettleAsync(
-                    message.Id, SettlementRefPrefixo + message.Id, CancellationToken.None);
-
-                if (resultado == SettleResultado.Confirmada)
-                {
-                    await repo.MarcarConfirmadaAsync(message.Id, CancellationToken.None);
-                    if (estado == RegistroLiquidacao.Inserida)
-                    {
-                        Interlocked.Increment(ref _liquidadas);
-                    }
-
-                    _logger.LogInformation("Transação {TransacaoId} liquidada e confirmada no BankCore.", message.Id);
-                    return true;
-                }
-
-                if (resultado == SettleResultado.Terminal)
-                {
-                    _logger.LogError("Confirmação de {TransacaoId} falhou de forma terminal; enviada para a DLQ.",
-                        message.Id);
-                    return false;
-                }
-
-                _logger.LogWarning("Confirmação de {TransacaoId} transitória (tentativa {Tentativa}/{Max}).",
-                    message.Id, tentativa, MaxTentativas);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Falha ao processar {TransacaoId} (tentativa {Tentativa}/{Max}).",
-                    message.Id, tentativa, MaxTentativas);
-            }
-
-            if (tentativa < MaxTentativas)
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(200 * tentativa));
-            }
-        }
-
-        return false;
-    }
-
-    private void RegistrarLocal(RegistroLiquidacao estado, LiquidacaoMessage message)
-    {
-        if (estado == RegistroLiquidacao.Inserida)
-        {
-            Interlocked.Increment(ref _liquidadas);
-            _logger.LogInformation("Transação {TransacaoId} liquidada (valor={Valor} {Moeda}).",
-                message.Id, message.Valor, message.Moeda);
-        }
-        else
-        {
-            Interlocked.Increment(ref _duplicadas);
-            _logger.LogInformation("Transação {TransacaoId} já liquidada; ignorada (idempotência).",
-                message.Id);
         }
     }
 
