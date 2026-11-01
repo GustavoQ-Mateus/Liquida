@@ -44,6 +44,7 @@ if (builder.Configuration.GetValue<bool>("BankCore:CallbackAtivo"))
         sp.GetRequiredService<ILogger<BankCoreSettleClient>>()));
 }
 
+builder.Services.AddSingleton<LiquidacaoProcessor>();
 builder.Services.AddHostedService<LiquidacaoConsumer>();
 
 var host = builder.Build();

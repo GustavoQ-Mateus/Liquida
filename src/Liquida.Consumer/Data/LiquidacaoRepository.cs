@@ -57,8 +57,8 @@ public sealed class LiquidacaoRepository : ILiquidacaoRepository
             new { message.Id, message.Valor },
             cancellationToken: cancellationToken);
 
-        var codigo = await connection.ExecuteScalarAsync<int>(command);
-        return (RegistroLiquidacao)codigo;
+        var codigo = await connection.ExecuteScalarAsync<int?>(command);
+        return codigo is null ? RegistroLiquidacao.PendenteConfirmacao : (RegistroLiquidacao)codigo;
     }
 
     public async Task MarcarConfirmadaAsync(Guid transacaoId, CancellationToken cancellationToken)
