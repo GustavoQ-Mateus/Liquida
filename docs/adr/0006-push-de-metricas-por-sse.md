@@ -1,6 +1,6 @@
 # ADR 0006: Push das métricas por Server-Sent Events
 
-- **Status:** Proposta (spec-v2.1.0, aguardando aprovação)
+- **Status:** Aceita (spec-v2.1.0)
 - **Data:** 2026-10-31
 - **Substitui:** o item "Push por WebSocket/SSE" das alternativas da ADR 0004, que deixava o push para depois. O restante da ADR 0004 (cada métrica na sua fonte, leitura fora do rate limiter, degradação graciosa) continua valendo.
 - **Contexto:** A 2.1.0 transforma o dashboard na única interface do conjunto BankCore + Liquida: uma tela de tempo real que acompanha uma simulação inteira sendo liquidada. A regra do projeto é push quando o backend oferecer, polling só como fallback. Na 1.1.0 o dashboard fazia polling de `GET /metrics` a cada 1s.

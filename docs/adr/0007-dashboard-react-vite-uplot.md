@@ -1,6 +1,6 @@
 # ADR 0007: Dashboard em React + Vite + uPlot
 
-- **Status:** Proposta (spec-v2.1.0, aguardando aprovação)
+- **Status:** Aceita (spec-v2.1.0)
 - **Data:** 2026-10-31
 - **Substitui:** a escolha de Angular + SCSS para `web/liquida-dashboard` feita na spec-v1.1.0.
 - **Contexto:** O dashboard da 1.1.0 (Angular 20, ApexCharts, lucide-angular) será excluído e refeito do zero como a única interface do conjunto BankCore + Liquida: fundo preto, faixa de KPIs, grade de gráficos de série temporal e um botão que inicia a simulação. Na definição da spec-v2.1.0 o usuário pediu para sair do Angular e escolheu React + Vite + TypeScript, com uma biblioteca leve de gráficos.
