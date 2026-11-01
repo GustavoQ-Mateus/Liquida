@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AFTER_RESET_BASELINE,
   INITIAL_BASELINE,
   INITIAL_COUNTER,
   accumulate,
@@ -123,5 +124,15 @@ describe('acumulador monotônico de 429', () => {
     const totals = runTotals(stats('run-1', 'running', 0, 0), baseline, counter.total);
 
     expect(totals.rateLimited).toBe(8);
+  });
+});
+
+describe('linha de base depois da limpeza', () => {
+  it('a primeira execução depois da limpeza conta do zero mesmo vista já em running', () => {
+    const state = advanceBaseline(AFTER_RESET_BASELINE, stats('run-1', 'running', 30, 9000), 0);
+
+    const totals = runTotals(stats('run-1', 'running', 30, 9000), state.baseline, 0);
+
+    expect(totals).toMatchObject({ scoped: true, settled: 30, volumeSettledCents: 9000 });
   });
 });

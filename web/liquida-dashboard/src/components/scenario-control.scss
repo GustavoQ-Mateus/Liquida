@@ -1,7 +1,8 @@
 .scenario-control {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--pad);
+  gap: var(--gap) var(--pad);
 }
 
 .scenario-control__select {

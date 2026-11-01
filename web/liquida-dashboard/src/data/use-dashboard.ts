@@ -6,6 +6,7 @@ import { resetLiquida } from './liquida-client';
 import { connectLiquida, type LiquidaTransport } from './liquida-stream';
 import type { SimulationConfig } from './scenarios';
 import {
+  AFTER_RESET_BASELINE,
   INITIAL_BASELINE,
   INITIAL_COUNTER,
   accumulate,
@@ -23,6 +24,7 @@ import type { MetricsSnapshot, SimulationStats, SimulationStatus, SourceHealth, 
 
 const WINDOW_POINTS = WINDOW_SECONDS + 1;
 const CONNECTING: SourceHealth = { state: 'conectando', failures: 0 };
+const AFTER_RESET_COUNTER: MonotonicCounter = { total: 0, last: 0 };
 
 export interface DashboardState {
   snapshot: MetricsSnapshot | null;
@@ -126,10 +128,10 @@ export function useDashboard(): DashboardState {
 
   const forgetHistory = useCallback(() => {
     previousSample.current = null;
-    rateLimitedCounter.current = INITIAL_COUNTER;
-    setRateLimitedTotal(null);
+    rateLimitedCounter.current = AFTER_RESET_COUNTER;
+    setRateLimitedTotal(AFTER_RESET_COUNTER.total);
     setReceivedPerSec(null);
-    setBaseline(INITIAL_BASELINE);
+    setBaseline(AFTER_RESET_BASELINE);
     setTimeline([]);
   }, []);
 

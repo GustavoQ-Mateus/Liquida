@@ -40,3 +40,9 @@
     background: var(--data-3);
   }
 }
+
+@media (max-width: 1100px) {
+  .clean-control {
+    position: static;
+  }
+}

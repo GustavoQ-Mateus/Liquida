@@ -52,6 +52,7 @@
 }
 
 .header-bar__actions {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--inline);

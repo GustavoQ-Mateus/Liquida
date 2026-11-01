@@ -54,3 +54,11 @@
     transform: scale(0.97);
   }
 }
+
+@media (max-width: 1100px) {
+  .confirm-popover {
+    right: auto;
+    left: 0;
+    transform-origin: top left;
+  }
+}

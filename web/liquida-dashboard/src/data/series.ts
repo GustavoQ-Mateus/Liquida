@@ -17,6 +17,7 @@ export interface RunBaseline {
 export interface BaselineState {
   lastSeenRunId: string | null | undefined;
   baseline: RunBaseline | null;
+  zeroed: boolean;
 }
 
 export interface RunTotals {
@@ -27,7 +28,8 @@ export interface RunTotals {
   rateLimited: number | null;
 }
 
-export const INITIAL_BASELINE: BaselineState = { lastSeenRunId: undefined, baseline: null };
+export const INITIAL_BASELINE: BaselineState = { lastSeenRunId: undefined, baseline: null, zeroed: false };
+export const AFTER_RESET_BASELINE: BaselineState = { lastSeenRunId: null, baseline: null, zeroed: true };
 
 export function pushWindow<T>(window: readonly T[], point: T, size: number): T[] {
   const next = [...window, point];
@@ -65,6 +67,13 @@ export function advanceBaseline(
   if (runId === null || runId === state.baseline?.runId) {
     return { ...state, lastSeenRunId: runId };
   }
+  if (state.zeroed) {
+    return {
+      lastSeenRunId: runId,
+      zeroed: false,
+      baseline: { runId, settled: 0, failed: 0, volumeSettledCents: 0, rateLimited: 0 },
+    };
+  }
   const sawRunStart = stats.simulation.phase === 'seeding';
   const sawRunChange = state.lastSeenRunId !== undefined && state.lastSeenRunId !== runId;
   if (!sawRunStart && !sawRunChange) {
@@ -72,6 +81,7 @@ export function advanceBaseline(
   }
   return {
     lastSeenRunId: runId,
+    zeroed: false,
     baseline: {
       runId,
       settled: stats.transfers.settled,
