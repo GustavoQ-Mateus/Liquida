@@ -221,7 +221,7 @@ Um purge simples deixaria fila, DLQ ou `liquidacoes` voltando a crescer segundos
   - `POST /simulacao/reset` do Liquida responde `503 reset_nao_estabilizou` em até 20s.
 - **CA29** Depois de **Limpar**, KPIs e gráficos ficam zerados e estáveis por 15s: fila 0, DLQ 0, `liquidacoes` 0, `recebidas` 0, pendentes no BankCore 0. Vale também quando o clique vem logo depois de uma execução que ainda tinha página do Producer e mensagens em voo.
 - **CA30** Cada cenário roda e o painel conta a história da §6.2:
-  - Tranquilo: recebidas/s ≤ 20, fila perto de 0, nenhum 429;
+  - Tranquilo: sem fila sustentada (a fila volta a 0 entre rajadas e não cresce ao longo da execução); 429 ocasional aceito, sem perda;
   - Padrão: fila cresce e drena com recebidas em 25/s;
   - Estresse: colisões de lock altas, fila grande e 429 maior que 0.
 
@@ -248,8 +248,14 @@ Branch `feature/limpeza-e-cenarios` a partir de `feature/dashboard-tempo-real`; 
 - **D20** Consumer com `ProcessamentoParalelo = 8`; ordem FIFO estrita deixa de valer dentro da fila (ADR 0009).
 - **D21** Acumulador monotônico de 429 no cliente (A5); o servidor continua zerando no restart (ADR 0004).
 - **D22** Seletor de cenário nativo; frase do cenário na linha de achado; cenário e caixa só em memória.
+- **D23** No compose de integração o Producer revarre pendentes a cada 1s (`Producer__PollDelaySeconds=1`), no lugar dos 5s da D7. O pacing segue em 25/s para o Estresse continuar mostrando 429.
 
 ## 11. Changelog
+- **2.2.0 (2026-11-01, correção do CA30 por decisão do usuário)**
+  - **Por que mudou:** o critério do Tranquilo ("recebidas ≤ 20/s, fila perto de 0, nenhum 429") era mais rígido que o desenho. Com o Producer esperando 5s quando o backlog zera (D7), o acumulado é drenado em rajadas a 25/s, e o balde de 25 do Producer e o balde de 25 da API (ADR 0001) se desalinham em alguns 429, todos reenviados pelo Polly e sem perda.
+  - **O que mudou:** o critério virou "sem fila sustentada; 429 ocasional aceito, sem perda", e o compose de integração passou a revarrer a cada 1s (D23).
+  - **Tranquilo de novo** (execução `9a3531de`, com limpeza antes): 470/470, **0 respostas 429**, recebidas 19,3/s em média, p95 1,66s (antes 7,8s), DLQ 0. A fila máxima foi 20; ela volta a 0 entre rajadas e não cresce ao longo da execução. Os patamares de 19 e 20 por ~5s vêm do intervalo de estatística da Management API, não de fila real. **CA30 ✅**.
+  - **Teste da corrida do `RegistrarAsync`:** `Registro_Concorrente_Ainda_Invisivel_Retorna_PendenteConfirmacao` (Postgres real) segura a corrida de forma determinística. Uma transação insere a linha sem commit, o `RegistrarAsync` fica esperando no `on conflict`, e o commit deixa a linha invisível ao snapshot da instrução. Com o código antigo o teste falha ("Expected PendenteConfirmacao, Actual Inserida"); com a correção, passa.
 - **2.2.0 (2026-11-01, Passos 18 a 22 implementados; fluxo integrado com o BankCore 1.4.0)** Dashboard servido do build de produção em 4200, Chrome real (headless via DevTools). Execuções `8a9c63bb` (Tranquilo), `137db3ea` (Padrão), `93ee657c` (Estresse), mais duas Padrão e uma Personalizado.
   - **CA28 ✅** Rodando: lixeira e seletor desabilitados com o motivo "Pare a simulação para limpar". Direto na API: BankCore `409 SIMULATION_RUNNING`; Liquida `503 reset_nao_estabilizou` em 20,4s.
   - **CA29 ✅** Lixeira confirmada com o pipeline ainda drenando (recebidas subindo de 787 para 862, fila 17, página do Producer em curso). A limpeza terminou em ~15s, e depois foram 25s com tudo em 0, conferido no snapshot, no RabbitMQ (`liquidacoes` 0, `liquidacoes.dlq` 0), no Postgres (`liquidacoes` 0) e no BankCore (`pending` 0, contas 0).
