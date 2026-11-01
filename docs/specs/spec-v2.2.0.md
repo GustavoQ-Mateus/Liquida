@@ -250,5 +250,24 @@ Branch `feature/limpeza-e-cenarios` a partir de `feature/dashboard-tempo-real`; 
 - **D22** Seletor de cenário nativo; frase do cenário na linha de achado; cenário e caixa só em memória.
 
 ## 11. Changelog
+- **2.2.0 (2026-11-01, Passos 18 a 22 implementados; fluxo integrado com o BankCore 1.4.0)** Dashboard servido do build de produção em 4200, Chrome real (headless via DevTools). Execuções `8a9c63bb` (Tranquilo), `137db3ea` (Padrão), `93ee657c` (Estresse), mais duas Padrão e uma Personalizado.
+  - **CA28 ✅** Rodando: lixeira e seletor desabilitados com o motivo "Pare a simulação para limpar". Direto na API: BankCore `409 SIMULATION_RUNNING`; Liquida `503 reset_nao_estabilizou` em 20,4s.
+  - **CA29 ✅** Lixeira confirmada com o pipeline ainda drenando (recebidas subindo de 787 para 862, fila 17, página do Producer em curso). A limpeza terminou em ~15s, e depois foram 25s com tudo em 0, conferido no snapshot, no RabbitMQ (`liquidacoes` 0, `liquidacoes.dlq` 0), no Postgres (`liquidacoes` 0) e no BankCore (`pending` 0, contas 0).
+  - **CA30 ⚠️ parcial**
+    - **Padrão ✅** fila cresce e drena com recebidas em 25/s.
+    - **Estresse ✅** 4776/4776, 5022 colisões, fila até 111, 429 > 0.
+    - **Personalizado ✅** campo fora do limite bloqueia o Iniciar; o body `{6,120,15,4}` chegou ao BankCore; 120/120.
+    - **Tranquilo ❌ como escrito:** 497/497, sem DLQ e p95 7,8s, mas houve 7 respostas 429, fila até 25 e recebidas em rajadas de ~25/s, não ≤ 20. A causa vem de antes desta versão: o Producer espera 5s quando o backlog zera (D7 da 2.0.0) e então drena o acumulado a 25/s, e o balde do Producer e o da API se desalinham em alguns 429 (todos reenviados pelo Polly; recebidas = aceitas). Correção pendente de decisão: `Producer__PollDelaySeconds=1` no compose de integração e pacing do Producer em 24/s, ou relaxar o critério.
+  - **CA31 ✅** Três execuções seguidas com "Limpar antes de iniciar" (Tranquilo 497/497, Padrão 1453/1453, Estresse 4776/4776), cada uma do zero (o `liquidadas` do Liquida bate com a execução), mais duas Padrão e uma Personalizado também limpas.
+  - **CA32 ✅** `liquida-api` parada 30s no Estresse: o Producer seguiu de pé (backoff), voltou a 24/s e a execução fechou com backlog 0.
+  - **CA33 ✅** Padrão: recebidas 24,06/s contra liquidadas 23,92/s em regime (diferença média absoluta 0,91/s), fila máxima 25, p95 57,95s (antes ~110s).
+  - **CA34 ✅** Restart da API no Estresse: o "429 da execução" foi de 13 para 31, sem voltar a 0.
+  - **CA35 ✅** 1440, 768 e 390 com popover, Personalizado, estados desabilitados e "Limpando ambiente…"; `inspect.mjs --app` 0 FAIL 0 WARN; `impeccable detect` sem achados; `lint.mjs` 0 FAIL (avisos defensáveis: sombra só no popover que flutua e zero à esquerda em m:ss).
+  - **CA36 ✅** `dotnet build` 0 avisos, `dotnet test` 43/43, `npm run build` sem avisos, `npm test` 25/25.
+  - **Correções feitas durante a verificação:**
+    - (a) com a concorrência da ADR 0009, `RegistrarAsync` lia "sem linha" como `Inserida` quando a linha concorrente ainda não era visível ao snapshot; agora é `PendenteConfirmacao` (só afetava contagem de log; o settle duplo é idempotente);
+    - (b) depois da limpeza o dashboard usa linha de base zerada para a próxima execução, em vez de "nunca vi execução", porque o rótulo caía em "acumulado no banco" e o 429 da execução ficava "indisponível";
+    - (c) o popover passou a ancorar na linha de ações nas larguras estreitas, e o seletor e a caixa quebram linha em 390px.
+  - **Achado no BankCore (para o orquestrador):** `POST /simulation/reset` chamado com settles do Liquida em andamento respondeu `500` depois de ~1s, junto com 6 `PATCH /settle` também `500` (padrão de deadlock do Postgres, `deadlock_timeout` 1s). Do lado do Liquida o settle `500` é transitório e é repetido; o dashboard mostra "Falha ao limpar o BankCore: erro interno", e a nova tentativa passa. Sugestão do lado do BankCore: repetir o reset em `40P01` ou travar as tabelas em ordem fixa.
 - **2.2.0 (2026-10-31, Aprovada)** Aprovada pelo usuário via orquestrador, incluindo `503 reset_nao_estabilizou`, `409 simulacao_reiniciando` e o formato `{"error","message"}`. Até o BankCore 1.4.0 subir, o dashboard trata `404` do reset do BankCore com mensagem clara ("O BankCore no ar não tem limpeza (precisa da 1.4.0)").
 - **2.2.0 (2026-10-31, Draft)** Limpeza de ambiente (reset do BankCore 1.4.0 e do Liquida com portão e janela de silêncio), cenários de simulação, "Limpar antes de iniciar", Producer resiliente (A3), Consumer concorrente (A4) e 429 da execução contínuo (A5). Aguardando aprovação.
