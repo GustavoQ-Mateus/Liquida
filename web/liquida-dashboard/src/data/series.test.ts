@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { INITIAL_BASELINE, advanceBaseline, nextHealth, pushWindow, ratePerSecond, runTotals } from './series';
+import {
+  INITIAL_BASELINE,
+  INITIAL_COUNTER,
+  accumulate,
+  advanceBaseline,
+  nextHealth,
+  pushWindow,
+  ratePerSecond,
+  runTotals,
+} from './series';
 import type { SimulationPhase, SimulationStats } from './types';
 
 function stats(runId: string | null, phase: SimulationPhase, settled: number, volume: number): SimulationStats {
@@ -92,5 +101,27 @@ describe('linha de base por execução', () => {
     state = advanceBaseline(state, stats('run-1', 'running', 700, 210000), 3);
 
     expect(state.baseline).toMatchObject({ runId: 'run-1', settled: 0, rateLimited: 0 });
+  });
+});
+
+describe('acumulador monotônico de 429', () => {
+  it('soma o crescimento e não perde o acumulado quando o contador cai', () => {
+    let counter = accumulate(INITIAL_COUNTER, 10);
+    counter = accumulate(counter, 14);
+    counter = accumulate(counter, 3);
+    counter = accumulate(counter, 5);
+
+    expect(counter.total).toBe(19);
+  });
+
+  it('linha de base com o acumulador mantém o 429 da execução após restart da api', () => {
+    const baseline = { runId: 'run-1', settled: 0, failed: 0, volumeSettledCents: 0, rateLimited: 10 };
+    let counter = accumulate(INITIAL_COUNTER, 10);
+    counter = accumulate(counter, 16);
+    counter = accumulate(counter, 2);
+
+    const totals = runTotals(stats('run-1', 'running', 0, 0), baseline, counter.total);
+
+    expect(totals.rateLimited).toBe(8);
   });
 });

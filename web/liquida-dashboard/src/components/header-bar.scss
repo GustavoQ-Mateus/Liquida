@@ -44,9 +44,17 @@
 
 .header-bar__simulation {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--pad);
+  justify-content: flex-end;
+  gap: var(--gap) var(--pad);
   margin-left: auto;
+}
+
+.header-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--inline);
 }
 
 .source-status,

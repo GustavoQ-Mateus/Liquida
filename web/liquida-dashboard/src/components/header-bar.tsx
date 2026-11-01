@@ -1,5 +1,9 @@
 import type { LiquidaTransport } from '../data/liquida-stream';
 import type { SimulationPhase, SourceHealth } from '../data/types';
+import type { ScenarioState } from '../data/use-scenario';
+import { isActive } from '../data/view-model';
+import { CleanControl } from './clean-control';
+import { ScenarioControl } from './scenario-control';
 import { SimulationControl } from './simulation-control';
 import { SourceStatus } from './source-status';
 import './header-bar.scss';
@@ -11,13 +15,17 @@ interface HeaderBarProps {
   phase: SimulationPhase | null;
   phaseText: string;
   busy: boolean;
+  cleaning: boolean;
+  scenario: ScenarioState;
   onStart: () => void;
   onStop: () => void;
+  onClean: () => void;
 }
 
 export function HeaderBar(props: HeaderBarProps) {
-  const running = props.phase === 'running' || props.phase === 'seeding';
+  const running = props.phase !== null && isActive(props.phase);
   const transportNote = props.liquida.state === 'ao-vivo' && props.liquidaTransport === 'polling' ? 'polling' : undefined;
+  const idleControlsDisabled = running || props.busy || props.phase === null;
   return (
     <header className="header-bar">
       <div className="header-bar__brand">
@@ -34,11 +42,25 @@ export function HeaderBar(props: HeaderBarProps) {
         <SourceStatus name="BankCore" health={props.bankcore} />
       </div>
       <div className="header-bar__simulation">
-        <span className={`phase ${running ? 'phase--running' : ''}`}>
+        <span className={`phase ${running || props.cleaning ? 'phase--running' : ''}`}>
           <span className="status-dot" aria-hidden="true" />
           <span aria-live="polite">{props.phaseText}</span>
         </span>
-        <SimulationControl phase={props.phase} busy={props.busy} onStart={props.onStart} onStop={props.onStop} />
+        <ScenarioControl scenario={props.scenario} disabled={idleControlsDisabled} />
+        <div className="header-bar__actions">
+          <SimulationControl
+            phase={props.phase}
+            busy={props.busy}
+            startBlocked={!props.scenario.valid}
+            onStart={props.onStart}
+            onStop={props.onStop}
+          />
+          <CleanControl
+            disabled={idleControlsDisabled}
+            disabledReason={props.phase === null ? 'BankCore indisponível' : 'Pare a simulação para limpar'}
+            onConfirm={props.onClean}
+          />
+        </div>
       </div>
     </header>
   );

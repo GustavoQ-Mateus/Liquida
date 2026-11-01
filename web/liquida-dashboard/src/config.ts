@@ -7,3 +7,4 @@ export const REQUEST_TIMEOUT_MS = 2000;
 export const STALE_STREAM_MS = 3000;
 export const FAILURES_UNTIL_UNAVAILABLE = 3;
 export const ERROR_VISIBLE_MS = 5000;
+export const RESET_TIMEOUT_MS = 25000;

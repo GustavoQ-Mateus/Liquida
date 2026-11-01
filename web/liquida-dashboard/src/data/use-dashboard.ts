@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ERROR_VISIBLE_MS, TICK_MS, WINDOW_SECONDS } from '../config';
-import { BankCoreError, SIMULATION_RUNNING, fetchStats, startSimulation, stopSimulation } from './bankcore-client';
+import { BankCoreError, fetchStats, resetBankCore, startSimulation, stopSimulation } from './bankcore-client';
+import { SIMULATION_RUNNING, cleanEnvironment } from './clean-sequence';
+import { resetLiquida } from './liquida-client';
 import { connectLiquida, type LiquidaTransport } from './liquida-stream';
+import type { SimulationConfig } from './scenarios';
 import {
   INITIAL_BASELINE,
+  INITIAL_COUNTER,
+  accumulate,
   advanceBaseline,
   nextHealth,
   pushWindow,
@@ -11,6 +16,7 @@ import {
   runTotals,
   type BaselineState,
   type CounterSample,
+  type MonotonicCounter,
   type RunTotals,
 } from './series';
 import type { MetricsSnapshot, SimulationStats, SimulationStatus, SourceHealth, TimelinePoint } from './types';
@@ -29,9 +35,11 @@ export interface DashboardState {
   timeline: TimelinePoint[];
   now: number;
   busy: boolean;
+  cleaning: boolean;
   error: string | null;
-  start: () => void;
+  start: (config: SimulationConfig, cleanFirst: boolean) => void;
   stop: () => void;
+  clean: () => void;
 }
 
 export function useDashboard(): DashboardState {
@@ -41,22 +49,27 @@ export function useDashboard(): DashboardState {
   const [liquidaTransport, setLiquidaTransport] = useState<LiquidaTransport>('sse');
   const [bankcore, setBankcore] = useState<SourceHealth>(CONNECTING);
   const [receivedPerSec, setReceivedPerSec] = useState<number | null>(null);
+  const [rateLimitedTotal, setRateLimitedTotal] = useState<number | null>(null);
   const [baseline, setBaseline] = useState<BaselineState>(INITIAL_BASELINE);
   const [timeline, setTimeline] = useState<TimelinePoint[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const latest = useRef({ snapshot, stats, liquida, bankcore, receivedPerSec });
-  latest.current = { snapshot, stats, liquida, bankcore, receivedPerSec };
+  const previousSample = useRef<CounterSample | null>(null);
+  const rateLimitedCounter = useRef<MonotonicCounter>(INITIAL_COUNTER);
+  const latest = useRef({ snapshot, stats, liquida, bankcore, receivedPerSec, rateLimitedTotal });
+  latest.current = { snapshot, stats, liquida, bankcore, receivedPerSec, rateLimitedTotal };
 
   useEffect(() => {
-    let previous: CounterSample | null = null;
     return connectLiquida({
       onSnapshot: (next) => {
         const sample = { value: next.recebidas, at: Date.parse(next.capturadoEm) };
-        const rate = ratePerSecond(previous, sample);
-        previous = sample;
+        const rate = ratePerSecond(previousSample.current, sample);
+        previousSample.current = sample;
+        rateLimitedCounter.current = accumulate(rateLimitedCounter.current, next.rateLimited);
         setSnapshot(next);
+        setRateLimitedTotal(rateLimitedCounter.current.total);
         if (rate !== null) {
           setReceivedPerSec(rate);
         }
@@ -78,7 +91,7 @@ export function useDashboard(): DashboardState {
         const next = await fetchStats();
         health = nextHealth(health, true);
         setStats(next);
-        setBaseline((state) => advanceBaseline(state, next, latest.current.snapshot?.rateLimited ?? null));
+        setBaseline((state) => advanceBaseline(state, next, latest.current.rateLimitedTotal));
       } catch {
         health = nextHealth(health, false);
       }
@@ -111,8 +124,30 @@ export function useDashboard(): DashboardState {
     return () => window.clearTimeout(timer);
   }, [error]);
 
+  const forgetHistory = useCallback(() => {
+    previousSample.current = null;
+    rateLimitedCounter.current = INITIAL_COUNTER;
+    setRateLimitedTotal(null);
+    setReceivedPerSec(null);
+    setBaseline(INITIAL_BASELINE);
+    setTimeline([]);
+  }, []);
+
+  const runClean = useCallback(async (): Promise<boolean> => {
+    setCleaning(true);
+    try {
+      await cleanEnvironment({ resetBankCore, resetLiquida });
+      forgetHistory();
+      return true;
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Falha ao limpar o ambiente.');
+      return false;
+    } finally {
+      setCleaning(false);
+    }
+  }, [forgetHistory]);
+
   const act = useCallback(async (action: () => Promise<SimulationStatus>) => {
-    setBusy(true);
     try {
       const status = await action();
       setStats((current) => (current === null ? current : { ...current, simulation: status }));
@@ -120,6 +155,13 @@ export function useDashboard(): DashboardState {
       if (!(failure instanceof BankCoreError && failure.code === SIMULATION_RUNNING)) {
         setError(failure instanceof Error ? failure.message : 'Falha ao falar com o BankCore.');
       }
+    }
+  }, []);
+
+  const withBusy = useCallback(async (work: () => Promise<void>) => {
+    setBusy(true);
+    try {
+      await work();
     } finally {
       setBusy(false);
     }
@@ -127,7 +169,7 @@ export function useDashboard(): DashboardState {
 
   const liquidaUp = liquida.state === 'ao-vivo';
   const bankcoreUp = bankcore.state === 'ao-vivo' && stats !== null;
-  const rateLimited = liquidaUp ? (snapshot?.rateLimited ?? null) : null;
+  const rateLimited = liquidaUp ? rateLimitedTotal : null;
 
   return {
     snapshot: liquidaUp ? snapshot : null,
@@ -140,9 +182,20 @@ export function useDashboard(): DashboardState {
     timeline,
     now,
     busy,
+    cleaning,
     error,
-    start: () => void act(startSimulation),
-    stop: () => void act(stopSimulation),
+    start: (config, cleanFirst) =>
+      void withBusy(async () => {
+        if (cleanFirst && !(await runClean())) {
+          return;
+        }
+        await act(() => startSimulation(config));
+      }),
+    stop: () => void withBusy(() => act(stopSimulation)),
+    clean: () =>
+      void withBusy(async () => {
+        await runClean();
+      }),
   };
 }
 

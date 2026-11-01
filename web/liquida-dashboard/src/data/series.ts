@@ -106,3 +106,18 @@ export function runTotals(stats: SimulationStats, baseline: RunBaseline | null, 
 function sinceBaseline(current: number, base: number): number {
   return Math.max(0, current - base);
 }
+
+export interface MonotonicCounter {
+  total: number;
+  last: number | null;
+}
+
+export const INITIAL_COUNTER: MonotonicCounter = { total: 0, last: null };
+
+export function accumulate(counter: MonotonicCounter, current: number): MonotonicCounter {
+  if (counter.last === null) {
+    return { total: current, last: current };
+  }
+  const delta = current >= counter.last ? current - counter.last : current;
+  return { total: counter.total + delta, last: current };
+}
